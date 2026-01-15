@@ -28,7 +28,7 @@ float process(float input) {
   static Phasor phasor;
   static bool initialized = false;     
   if (!initialized) {
-    phasor.setFrequency(1.f);
+    phasor.setFrequency(220.f);
     initialized = true;
   }   
   float output = phasor.process();

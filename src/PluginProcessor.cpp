@@ -1,6 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "wasm-app.h"
+// #include "wasm-app.h"
 
 #include <chrono>
 #include <vector>
@@ -101,7 +101,7 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     wasm_rt_init();
     std::cout << "WASM runtime initialized." << std::endl;
 
-    w2c_app wasm_app;
+    // w2c_app wasm_app;
     std::cout << "Instantiating WASM module..." << std::endl;
     wasm2c_app_instantiate(&wasm_app); // 
     std::cout << "WASM initialized successfully!" << std::endl;
@@ -181,7 +181,7 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
 
     std::cout << "+++++ TEST COMPLETE +++++" << std::endl;
 
-    juce::JUCEApplication::quit();
+    // juce::JUCEApplication::quit();
 
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
@@ -242,11 +242,16 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // the samples and the outer loop is handling the channels.
     // Alternatively, you can process the samples with the channels
     // interleaved by keeping the same state.
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
+    for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
     {
-        auto* channelData = buffer.getWritePointer (channel);
-        juce::ignoreUnused (channelData);
-        // ..do something to the data...
+        float input = buffer.getReadPointer(0)[sample];
+        float output = std::sinf(w2c_app_process(&wasm_app, input) * M_PI * 2.0f);
+        buffer.getWritePointer(0)[sample] = output * 0.2f;
+    }
+
+    for (int channel = 1; channel < totalNumOutputChannels; ++channel)
+    {
+        buffer.copyFrom(channel, 0, buffer, 0, 0, buffer.getNumSamples());
     }
 }
 
