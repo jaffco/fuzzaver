@@ -114,6 +114,51 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     std::cout << "WASM Sample Rate: " << wasm_sample_rate << std::endl;
     std::cout << "JUCE Sample Rate: " << sampleRate << std::endl;
 
+    // Test parameters
+    std::cout << std::endl << "=== PARAMETER TESTING ===" << std::endl;
+    
+    // Get default parameter values
+    std::cout << "Default parameter values:" << std::endl;
+    float bypass_default = w2c_muff_getParamValue(&wasm_app, 0, 12);
+    float output_default = w2c_muff_getParamValue(&wasm_app, 0, 52);
+    float drive_default = w2c_muff_getParamValue(&wasm_app, 0, 56);
+    float tone_default = w2c_muff_getParamValue(&wasm_app, 0, 60);
+    float input_default = w2c_muff_getParamValue(&wasm_app, 0, 80);
+    
+    std::cout << "  bypass (index 12): " << bypass_default << std::endl;
+    std::cout << "  output (index 52): " << output_default << std::endl;
+    std::cout << "  drive  (index 56): " << drive_default << std::endl;
+    std::cout << "  tone   (index 60): " << tone_default << std::endl;
+    std::cout << "  input  (index 80): " << input_default << std::endl;
+    
+    // Set new parameter values
+    std::cout << std::endl << "Setting new parameter values..." << std::endl;
+    w2c_muff_setParamValue(&wasm_app, 0, 12, 0.0f);    // bypass off
+    w2c_muff_setParamValue(&wasm_app, 0, 52, 85.0f);   // output = 85%
+    w2c_muff_setParamValue(&wasm_app, 0, 56, 45.0f);   // drive = 45
+    w2c_muff_setParamValue(&wasm_app, 0, 60, 0.75f);   // tone = 0.75
+    w2c_muff_setParamValue(&wasm_app, 0, 80, 6.0f);    // input = 6 dB
+    std::cout << "  bypass = 0.0" << std::endl;
+    std::cout << "  output = 85.0" << std::endl;
+    std::cout << "  drive  = 45.0" << std::endl;
+    std::cout << "  tone   = 0.75" << std::endl;
+    std::cout << "  input  = 6.0" << std::endl;
+    
+    // Verify the new values
+    std::cout << std::endl << "Verifying new parameter values:" << std::endl;
+    float bypass_verify = w2c_muff_getParamValue(&wasm_app, 0, 12);
+    float output_verify = w2c_muff_getParamValue(&wasm_app, 0, 52);
+    float drive_verify = w2c_muff_getParamValue(&wasm_app, 0, 56);
+    float tone_verify = w2c_muff_getParamValue(&wasm_app, 0, 60);
+    float input_verify = w2c_muff_getParamValue(&wasm_app, 0, 80);
+    
+    std::cout << "  bypass (index 12): " << bypass_verify << std::endl;
+    std::cout << "  output (index 52): " << output_verify << std::endl;
+    std::cout << "  drive  (index 56): " << drive_verify << std::endl;
+    std::cout << "  tone   (index 60): " << tone_verify << std::endl;
+    std::cout << "  input  (index 80): " << input_verify << std::endl;
+    std::cout << "=== PARAMETER TEST COMPLETE ===" << std::endl << std::endl;
+
     std::cout << "Testing WASM compute function..." << std::endl;
     
     // Get access to WASM memory
