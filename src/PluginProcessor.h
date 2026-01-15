@@ -46,6 +46,16 @@ public:
 private:
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioPluginAudioProcessor)
+    
+    static juce::AudioProcessor::BusesProperties createBusesProperties();
+    static void createParametersAndInitWasm(juce::AudioProcessor& processor, 
+                                           w2c_muff& wasm_app,
+                                           wasm_rt_memory_t*& wasm_memory,
+                                           std::map<juce::String, int>& parameterIndexMap);
+    
     w2c_muff wasm_app;
     wasm_rt_memory_t* wasm_memory = nullptr;
+    
+    // Map JUCE parameter IDs to WASM parameter indices
+    std::map<juce::String, int> parameterIndexMap;
 };
