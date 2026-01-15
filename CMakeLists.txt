@@ -48,6 +48,7 @@ target_sources(${PROJECT_NAME}
     PRIVATE
         src/PluginEditor.cpp
         src/PluginProcessor.cpp
+        src/WasmEnv.cpp
         build/wasm-app_0.c
         build/wasm-app_1.c
         build/wasm-app_2.c

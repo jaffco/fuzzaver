@@ -46,5 +46,5 @@ public:
 private:
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioPluginAudioProcessor)
-    w2c_app wasm_app;
+    w2c_muff wasm_app;
 };

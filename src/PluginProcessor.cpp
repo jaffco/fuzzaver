@@ -101,85 +101,95 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     wasm_rt_init();
     std::cout << "WASM runtime initialized." << std::endl;
 
-    // w2c_app wasm_app;
     std::cout << "Instantiating WASM module..." << std::endl;
-    wasm2c_app_instantiate(&wasm_app); // 
+    wasm2c_muff_instantiate(&wasm_app, wasm_app.w2c_env_instance); // 
     std::cout << "WASM initialized successfully!" << std::endl;
 
-    std::cout << "Testing WASM process function..." << std::endl;
-    float test_in = 0.5f;
-    float test_out = w2c_app_process(&wasm_app, test_in);
-    std::cout << std::fixed << std::setprecision(3) << "Test: input=" << test_in << ", output=" << test_out << std::endl;
+    std::cout << "Calling WASM module initialization function..." << std::endl;
+    w2c_muff_init(&wasm_app, float(samplesPerBlock), float(sampleRate));
+    std::cout << "WASM module initialized successfully!" << std::endl;
 
-    // BENCHMARKING BELOW
+    std::cout << "Getting WASM module sample rate..." << std::endl;
+    u32 wasm_sample_rate = w2c_muff_getSampleRate(&wasm_app, 0);
+    std::cout << "WASM Sample Rate: " << wasm_sample_rate << std::endl;
+    std::cout << "JUCE Sample Rate: " << sampleRate << std::endl;
 
-    // Benchmark configuration
-    const int WARMUP_RUNS = 10;
-    const int BENCHMARK_RUNS = 48000;  // 1 second at 48kHz
+    juce::JUCEApplication::quit();
 
-    // Warmup phase to stabilize caches and branch prediction
-    std::cout << std::endl;
-    std::cout << "[WARMUP] Running " << WARMUP_RUNS << " warmup iterations..." << std::endl;
-    volatile float warmup_result = 0.0f;  // Prevent optimization
-    for (int i = 0; i < WARMUP_RUNS; i++) {
-        float a = juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f;
-        warmup_result += w2c_app_process(&wasm_app, a);
-    }
-    std::cout << "[OK] Warmup complete (result=" << std::fixed << std::setprecision(3) << warmup_result << ")" << std::endl;
+    // std::cout << "Testing WASM process function..." << std::endl;
+    // float test_in = 0.5f;
+    // float test_out = w2c_muff_process(&wasm_app, test_in);
+    // std::cout << std::fixed << std::setprecision(3) << "Test: input=" << test_in << ", output=" << test_out << std::endl;
 
-    // Benchmark phase with random inputs
-    std::cout << std::endl;
-    std::cout << "[BENCHMARK] Running " << BENCHMARK_RUNS << " iterations..." << std::endl;
+    // // BENCHMARKING BELOW
 
-    std::vector<double> timings;
-    volatile float checksum = 0.0f;  // Prevent optimization
+    // // Benchmark configuration
+    // const int WARMUP_RUNS = 10;
+    // const int BENCHMARK_RUNS = 48000;  // 1 second at 48kHz
 
-    for (int i = 0; i < BENCHMARK_RUNS; i++) {
-        // Use random audio samples in range -1.0 to 1.0
-        float a = (float)(juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f);
+    // // Warmup phase to stabilize caches and branch prediction
+    // std::cout << std::endl;
+    // std::cout << "[WARMUP] Running " << WARMUP_RUNS << " warmup iterations..." << std::endl;
+    // volatile float warmup_result = 0.0f;  // Prevent optimization
+    // for (int i = 0; i < WARMUP_RUNS; i++) {
+    //     float a = juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f;
+    //     warmup_result += w2c_muff_process(&wasm_app, a);
+    // }
+    // std::cout << "[OK] Warmup complete (result=" << std::fixed << std::setprecision(3) << warmup_result << ")" << std::endl;
 
-        auto start = std::chrono::high_resolution_clock::now();
-        float result = w2c_app_process(&wasm_app, a);
-        auto end = std::chrono::high_resolution_clock::now();
+    // // Benchmark phase with random inputs
+    // std::cout << std::endl;
+    // std::cout << "[BENCHMARK] Running " << BENCHMARK_RUNS << " iterations..." << std::endl;
 
-        double elapsed_us = std::chrono::duration<double, std::micro>(end - start).count();
-        timings.push_back(elapsed_us);
+    // std::vector<double> timings;
+    // volatile float checksum = 0.0f;  // Prevent optimization
 
-        // Use result to prevent dead code elimination
-        checksum += result;
-    }
-    double sum = std::accumulate(timings.begin(), timings.end(), 0.0);
-    double avg_us = sum / timings.size();
-    std::sort(timings.begin(), timings.end());
-    double median_us = timings[timings.size() / 2];
-    double min_us = timings[0];
-    double max_us = timings[timings.size() - 1];
-    double variance = 0.0;
-    for (double t : timings) {
-        variance += (t - avg_us) * (t - avg_us);
-    }
-    variance /= timings.size();
-    double stddev_us = std::sqrt(variance);
+    // for (int i = 0; i < BENCHMARK_RUNS; i++) {
+    //     // Use random audio samples in range -1.0 to 1.0
+    //     float a = (float)(juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f);
+
+    //     auto start = std::chrono::high_resolution_clock::now();
+    //     float result = w2c_muff_process(&wasm_app, a);
+    //     auto end = std::chrono::high_resolution_clock::now();
+
+    //     double elapsed_us = std::chrono::duration<double, std::micro>(end - start).count();
+    //     timings.push_back(elapsed_us);
+
+    //     // Use result to prevent dead code elimination
+    //     // checksum += result;
+    // }
+    // double sum = std::accumulate(timings.begin(), timings.end(), 0.0);
+    // double avg_us = sum / timings.size();
+    // std::sort(timings.begin(), timings.end());
+    // double median_us = timings[timings.size() / 2];
+    // double min_us = timings[0];
+    // double max_us = timings[timings.size() - 1];
+    // double variance = 0.0;
+    // for (double t : timings) {
+    //     variance += (t - avg_us) * (t - avg_us);
+    // }
+    // variance /= timings.size();
+    // double stddev_us = std::sqrt(variance);
     
-    std::cout << std::endl;
-    std::cout << "=== BENCHMARK RESULTS ===" << std::endl;
-    std::cout << "Iterations: " << BENCHMARK_RUNS << std::endl;
-    std::cout << "Average:    " << std::fixed << std::setprecision(3) << avg_us << " us" << std::endl;
-    std::cout << "Median:     " << std::fixed << std::setprecision(3) << median_us << " us" << std::endl;
-    std::cout << "Std Dev:    " << std::fixed << std::setprecision(3) << stddev_us << " us" << std::endl;
-    std::cout << "Minimum:    " << std::fixed << std::setprecision(3) << min_us << " us" << std::endl;
-    std::cout << "Maximum:    " << std::fixed << std::setprecision(3) << max_us << " us" << std::endl;
-    std::cout << "Checksum:   " << std::fixed << std::setprecision(3) << checksum << " (prevents optimization)" << std::endl;
+    // std::cout << std::endl;
+    // std::cout << "=== BENCHMARK RESULTS ===" << std::endl;
+    // std::cout << "Iterations: " << BENCHMARK_RUNS << std::endl;
+    // std::cout << "Average:    " << std::fixed << std::setprecision(3) << avg_us << " us" << std::endl;
+    // std::cout << "Median:     " << std::fixed << std::setprecision(3) << median_us << " us" << std::endl;
+    // std::cout << "Std Dev:    " << std::fixed << std::setprecision(3) << stddev_us << " us" << std::endl;
+    // std::cout << "Minimum:    " << std::fixed << std::setprecision(3) << min_us << " us" << std::endl;
+    // std::cout << "Maximum:    " << std::fixed << std::setprecision(3) << max_us << " us" << std::endl;
+    // std::cout << "Checksum:   " << std::fixed << std::setprecision(3) << checksum << " (prevents optimization)" << std::endl;
     
-    // Verify correctness with known values
-    float verify_in = 0.5f;
-    float verify_out = w2c_app_process(&wasm_app, verify_in);
-    std::cout << std::endl;
-    std::cout << "Verification: input=" << std::fixed << std::setprecision(3) << verify_in << ", output=" << std::fixed << std::setprecision(3) << verify_out << std::endl;
-    std::cout << "[SUCCESS] WASM2C benchmark complete!" << std::endl;
+    // // Verify correctness with known values
+    // float verify_in = 0.5f;
+    // float verify_out = w2c_muff_process(&wasm_app, verify_in);
+    // std::cout << std::endl;
+    // std::cout << "Verification: input=" << std::fixed << std::setprecision(3) << verify_in << ", output=" << std::fixed << std::setprecision(3) << verify_out << std::endl;
+    // std::cout << "[SUCCESS] WASM2C benchmark complete!" << std::endl;
 
 
-    std::cout << "+++++ TEST COMPLETE +++++" << std::endl;
+    // std::cout << "+++++ TEST COMPLETE +++++" << std::endl;
 
     // juce::JUCEApplication::quit();
 
@@ -242,17 +252,17 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // the samples and the outer loop is handling the channels.
     // Alternatively, you can process the samples with the channels
     // interleaved by keeping the same state.
-    for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
-    {
-        float input = buffer.getReadPointer(0)[sample];
-        float output = std::sinf(w2c_app_process(&wasm_app, input) * M_PI * 2.0f);
-        buffer.getWritePointer(0)[sample] = output * 0.2f;
-    }
+    // for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+    // {
+    //     float input = buffer.getReadPointer(0)[sample];
+    //     float output = std::sinf(w2c_app_process(&wasm_app, input) * M_PI * 2.0f);
+    //     buffer.getWritePointer(0)[sample] = output * 0.2f;
+    // }
 
-    for (int channel = 1; channel < totalNumOutputChannels; ++channel)
-    {
-        buffer.copyFrom(channel, 0, buffer, 0, 0, buffer.getNumSamples());
-    }
+    // for (int channel = 1; channel < totalNumOutputChannels; ++channel)
+    // {
+    //     buffer.copyFrom(channel, 0, buffer, 0, 0, buffer.getNumSamples());
+    // }
 }
 
 //==============================================================================
