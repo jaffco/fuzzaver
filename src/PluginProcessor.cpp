@@ -117,7 +117,7 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     std::cout << "Testing WASM compute function..." << std::endl;
     
     // Get access to WASM memory
-    wasm_rt_memory_t* wasm_memory = w2c_muff_memory(&wasm_app);
+    wasm_memory = w2c_muff_memory(&wasm_app);
     std::cout << "WASM memory size: " << wasm_memory->size << " bytes" << std::endl;
     
     // Allocate buffers in WASM memory (we'll use the end of memory for our test buffers)
@@ -151,7 +151,7 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
                   << " out=" << output_buffer[i] << std::endl;
     }
     
-    juce::JUCEApplication::quit();
+    // juce::JUCEApplication::quit();
 
     // // BENCHMARKING BELOW
 
@@ -291,10 +291,41 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     //     buffer.getWritePointer(0)[sample] = output * 0.2f;
     // }
 
-    // for (int channel = 1; channel < totalNumOutputChannels; ++channel)
-    // {
-    //     buffer.copyFrom(channel, 0, buffer, 0, 0, buffer.getNumSamples());
-    // }
+
+    
+    // Allocate buffers in WASM memory (we'll use the end of memory for our test buffers)
+    const u32 test_buffer_size = buffer.getNumSamples(); // Process one block
+    const u32 input_buffer_offset = 1024;  // Arbitrary safe offset in WASM memory
+    const u32 output_buffer_offset = 1024 + (test_buffer_size * sizeof(float));
+    const u32 input_ptrs_offset = output_buffer_offset + (test_buffer_size * sizeof(float));
+    const u32 output_ptrs_offset = input_ptrs_offset + sizeof(u32);
+    
+    // Write test input data to WASM memory
+    float* input_buffer = (float*)(wasm_memory->data + input_buffer_offset);
+    for (u32 i = 0; i < test_buffer_size; i++) {
+        input_buffer[i] = buffer.getReadPointer(0)[i];
+    }
+    
+    // Create input/output pointer arrays (float** pattern)
+    u32* input_ptrs = (u32*)(wasm_memory->data + input_ptrs_offset);
+    u32* output_ptrs = (u32*)(wasm_memory->data + output_ptrs_offset);
+    input_ptrs[0] = input_buffer_offset;   // Pointer to input channel 0
+    output_ptrs[0] = output_buffer_offset; // Pointer to output channel 0
+    
+    // std::cout << "Processing " << test_buffer_size << " samples..." << std::endl;
+    w2c_muff_compute(&wasm_app, 0, test_buffer_size, input_ptrs_offset, output_ptrs_offset);
+    
+    // Read results from WASM memory
+    float* output_buffer = (float*)(wasm_memory->data + output_buffer_offset);
+    for (u32 i = 0; i < test_buffer_size; i++) {
+        buffer.getWritePointer(0)[i] = output_buffer[i];
+    }
+
+    // copy channel 0 to all channels
+    for (int channel = 1; channel < totalNumOutputChannels; ++channel)
+    {
+        buffer.copyFrom(channel, 0, buffer, 0, 0, buffer.getNumSamples());
+    }
 }
 
 //==============================================================================
