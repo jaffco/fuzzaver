@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "wasm-app.h"
 
 //==============================================================================
 AudioPluginAudioProcessor::AudioPluginAudioProcessor()
@@ -86,6 +87,19 @@ void AudioPluginAudioProcessor::changeProgramName (int index, const juce::String
 //==============================================================================
 void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    std::cout << "+++++ INIT CALLED +++++" << std::endl;
+    std::cout << "Sample Rate: " << sampleRate << std::endl;
+    std::cout << "Samples Per Block: " << samplesPerBlock << std::endl;
+
+    std::cout << "Initializing WebAssembly..." << std::endl;
+    wasm_rt_init();
+    std::cout << "WASM runtime initialized." << std::endl;
+
+    w2c_app wasm_app;
+    std::cout << "Instantiating WASM module..." << std::endl;
+    wasm2c_app_instantiate(&wasm_app); // 
+    std::cout << "WASM initialized successfully!" << std::endl;
+
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
     juce::ignoreUnused (sampleRate, samplesPerBlock);

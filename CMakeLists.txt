@@ -47,7 +47,20 @@ juce_add_plugin(${PROJECT_NAME}
 target_sources(${PROJECT_NAME}
     PRIVATE
         src/PluginEditor.cpp
-        src/PluginProcessor.cpp)
+        src/PluginProcessor.cpp
+        build/wasm-app_0.c
+        build/wasm-app_1.c
+        build/wasm-app_2.c
+        build/wasm-app_3.c
+        build/wasm-app_4.c
+        build/wasm-app_5.c
+        build/wasm-app_6.c
+        build/wasm-app_7.c
+        wasm-rt/wasm-rt-impl.c
+        wasm-rt/wasm-rt-mem-impl.c
+        wasm-rt/wasm-rt-exceptions-impl.c)
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/wasm-rt)
 
 # `target_compile_definitions` adds some preprocessor definitions to our target. In a Projucer
 # project, these might be passed in the 'Preprocessor Definitions' field. JUCE modules also make use
