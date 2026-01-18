@@ -45,4 +45,10 @@ public:
 private:
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioPluginAudioProcessor)
+    
+    static juce::AudioProcessor::BusesProperties createBusesProperties();
+    
+    // Audio file playback
+    juce::AudioBuffer<float> audioFileBuffer;
+    int playbackPosition = 0;
 };

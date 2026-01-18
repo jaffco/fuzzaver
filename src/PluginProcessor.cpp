@@ -1,17 +1,69 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "BinaryData.h"
+// #include "wasm-app.h"
+
+#include <juce_audio_formats/juce_audio_formats.h>
+#include <chrono>
+#include <vector>
+#include <algorithm>
+#include <numeric>
+#include <cmath>
 
 //==============================================================================
-AudioPluginAudioProcessor::AudioPluginAudioProcessor()
-     : AudioProcessor (BusesProperties()
-                     #if ! JucePlugin_IsMidiEffect
-                      #if ! JucePlugin_IsSynth
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                      #endif
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
-                     #endif
-                       )
+juce::AudioProcessor::BusesProperties AudioPluginAudioProcessor::createBusesProperties()
 {
+    return BusesProperties()
+        #if ! JucePlugin_IsMidiEffect
+         #if ! JucePlugin_IsSynth
+          .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+         #endif
+          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
+        #endif
+        ;
+}
+
+AudioPluginAudioProcessor::AudioPluginAudioProcessor()
+     : AudioProcessor (createBusesProperties())
+{    
+    // Load the WAV file from binary data
+    std::cout << "Loading audio file from binary data..." << std::endl;
+    
+    int dataSize = 0;
+    const char* data = BinaryData::getNamedResource("RawGTR_wav", dataSize);
+    
+    if (data != nullptr && dataSize > 0)
+    {
+        std::cout << "Binary data found: " << dataSize << " bytes" << std::endl;
+        
+        juce::AudioFormatManager formatManager;
+        formatManager.registerBasicFormats();
+        
+        auto inputStream = std::make_unique<juce::MemoryInputStream>(data, dataSize, false);
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(std::move(inputStream)));
+        
+        if (reader != nullptr)
+        {
+            std::cout << "Audio file loaded successfully!" << std::endl;
+            std::cout << "  Sample rate: " << reader->sampleRate << std::endl;
+            std::cout << "  Num channels: " << reader->numChannels << std::endl;
+            std::cout << "  Length in samples: " << reader->lengthInSamples << std::endl;
+            std::cout << "  Duration: " << (reader->lengthInSamples / reader->sampleRate) << " seconds" << std::endl;
+            
+            audioFileBuffer.setSize(reader->numChannels, (int)reader->lengthInSamples);
+            reader->read(&audioFileBuffer, 0, (int)reader->lengthInSamples, 0, true, true);
+            
+            std::cout << "Audio file loaded into buffer" << std::endl;
+        }
+        else
+        {
+            std::cout << "ERROR: Could not create audio reader!" << std::endl;
+        }
+    }
+    else
+    {
+        std::cout << "ERROR: Binary data not found!" << std::endl;
+    }
 }
 
 AudioPluginAudioProcessor::~AudioPluginAudioProcessor()
@@ -139,17 +191,33 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
+    // Simple audio file playback
+    if (audioFileBuffer.getNumSamples() > 0)
     {
-        auto* channelData = buffer.getWritePointer (channel);
-        juce::ignoreUnused (channelData);
-        // ..do something to the data...
+        int numSamples = buffer.getNumSamples();
+        int numChannels = totalNumOutputChannels;
+
+        // Read from channel 0 of the audio file
+        const float* fileData = audioFileBuffer.getReadPointer(0);
+
+        for (int channel = 0; channel < numChannels; ++channel)
+        {
+            float* outputData = buffer.getWritePointer(channel);
+
+            for (int sample = 0; sample < numSamples; ++sample)
+            {
+                int pos = playbackPosition + sample;
+                if (pos >= audioFileBuffer.getNumSamples())
+                    pos %= audioFileBuffer.getNumSamples(); // loop
+
+                outputData[sample] = fileData[pos];
+            }
+        }
+
+        // Advance playback position
+        playbackPosition += numSamples;
+        if (playbackPosition >= audioFileBuffer.getNumSamples())
+            playbackPosition %= audioFileBuffer.getNumSamples();
     }
 }
 
