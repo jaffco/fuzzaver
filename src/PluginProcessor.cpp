@@ -54,7 +54,7 @@ void AudioPluginAudioProcessor::createParametersAndInitWasm(juce::AudioProcessor
     }
     std::cout << std::endl;
     
-    // Read JSON metadata from WASM memory
+    // Read JSON metadata from WASM memory BEFORE calling init (which overwrites it)
     const char* json_cstr = (const char*)(wasm_memory->data);
     juce::String jsonString(json_cstr);
     
@@ -102,7 +102,7 @@ void AudioPluginAudioProcessor::createParametersAndInitWasm(juce::AudioProcessor
         
         std::cout << "Processing param: " << label << " (type: " << type << ", index: " << index << ")" << std::endl;
         
-        if (type == "vslider")
+        if (type == "hslider" || type == "vslider")
         {
             float minVal = item.getProperty("min", 0.0f);
             float maxVal = item.getProperty("max", 1.0f);
@@ -122,6 +122,11 @@ void AudioPluginAudioProcessor::createParametersAndInitWasm(juce::AudioProcessor
             
             processor.addParameter(param.release());
             std::cout << "  Added float parameter" << std::endl;
+            
+            // Set the default value in WASM
+            w2c_muff_setParamValue(&wasm_app, 0, index, initVal);
+            float readback = w2c_muff_getParamValue(&wasm_app, 0, index);
+            std::cout << "  Set WASM default value: " << initVal << " (readback: " << readback << ")" << std::endl;
         }
         else if (type == "checkbox")
         {
@@ -135,10 +140,45 @@ void AudioPluginAudioProcessor::createParametersAndInitWasm(juce::AudioProcessor
             
             processor.addParameter(param.release());
             std::cout << "  Added bool parameter" << std::endl;
+            
+            // Set the default value in WASM (false = 0.0)
+            w2c_muff_setParamValue(&wasm_app, 0, index, 0.0f);
+            float readback = w2c_muff_getParamValue(&wasm_app, 0, index);
+            std::cout << "  Set WASM default value: 0.0 (readback: " << readback << ")" << std::endl;
         }
     }
     
     std::cout << "Finished creating " << processor.getParameters().size() << " parameters" << std::endl;
+    
+    // Now initialize WASM with default sample rate (this will be re-initialized in prepareToPlay with actual values)
+    std::cout << "Initializing WASM with default parameters..." << std::endl;
+    w2c_muff_init(&wasm_app, 512, 48000);
+    
+    // Re-set all default values after init
+    std::cout << "Re-setting default values after init..." << std::endl;
+    for (auto* param : processor.getParameters())
+    {
+        juce::String paramName = param->getName(100);
+        if (parameterIndexMap.count(paramName) > 0)
+        {
+            int wasmIndex = parameterIndexMap[paramName];
+            float value = 0.0f;
+            
+            if (auto* floatParam = dynamic_cast<juce::AudioParameterFloat*>(param))
+            {
+                juce::NormalisableRange<float> range = floatParam->getNormalisableRange();
+                value = range.convertFrom0to1(param->getValue());
+            }
+            else if (auto* boolParam = dynamic_cast<juce::AudioParameterBool*>(param))
+            {
+                value = boolParam->get() ? 1.0f : 0.0f;
+            }
+            
+            w2c_muff_setParamValue(&wasm_app, 0, wasmIndex, value);
+            std::cout << "  [" << paramName << "] = " << value << std::endl;
+        }
+    }
+    std::cout << "Initialization complete." << std::endl;
 }
 
 //==============================================================================
@@ -217,6 +257,39 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     std::cout << "Re-initializing WASM with correct parameters..." << std::endl;
     w2c_muff_init(&wasm_app, float(samplesPerBlock), float(sampleRate));
     std::cout << "WASM module initialized successfully!" << std::endl;
+    
+    // Restore parameter values after re-init
+    std::cout << "Restoring parameter values..." << std::endl;
+    for (auto* param : getParameters())
+    {
+        juce::String paramName = param->getName(100);
+        if (parameterIndexMap.count(paramName) > 0)
+        {
+            int wasmIndex = parameterIndexMap[paramName];
+            float value = 0.0f;
+            
+            if (auto* floatParam = dynamic_cast<juce::AudioParameterFloat*>(param))
+            {
+                juce::NormalisableRange<float> range = floatParam->getNormalisableRange();
+                value = range.convertFrom0to1(param->getValue());
+                std::cout << "  [" << paramName << "] JUCE norm: " << param->getValue() 
+                          << ", scaled: " << value 
+                          << ", range: [" << range.start << ", " << range.end << "]" << std::endl;
+            }
+            else if (auto* boolParam = dynamic_cast<juce::AudioParameterBool*>(param))
+            {
+                value = boolParam->get() ? 1.0f : 0.0f;
+                std::cout << "  [" << paramName << "] bool: " << value << std::endl;
+            }
+            
+            w2c_muff_setParamValue(&wasm_app, 0, wasmIndex, value);
+            
+            // Verify it was set
+            float readback = w2c_muff_getParamValue(&wasm_app, 0, wasmIndex);
+            std::cout << "    WASM readback: " << readback << std::endl;
+        }
+    }
+    std::cout << "Parameter restoration complete." << std::endl;
 
     std::cout << "Getting WASM module sample rate..." << std::endl;
     u32 wasm_sample_rate = w2c_muff_getSampleRate(&wasm_app, 0);
@@ -224,21 +297,21 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     std::cout << "JUCE Sample Rate: " << sampleRate << std::endl;
 
     // Test parameters
-    std::cout << std::endl << "=== PARAMETER TESTING ===" << std::endl;
+    // std::cout << std::endl << "=== PARAMETER TESTING ===" << std::endl;
     
-    // Get default parameter values
-    std::cout << "Default parameter values:" << std::endl;
-    float bypass_default = w2c_muff_getParamValue(&wasm_app, 0, 12);
-    float output_default = w2c_muff_getParamValue(&wasm_app, 0, 52);
-    float drive_default = w2c_muff_getParamValue(&wasm_app, 0, 56);
-    float tone_default = w2c_muff_getParamValue(&wasm_app, 0, 60);
-    float input_default = w2c_muff_getParamValue(&wasm_app, 0, 80);
+    // // Get default parameter values
+    // std::cout << "Default parameter values:" << std::endl;
+    // float bypass_default = w2c_muff_getParamValue(&wasm_app, 0, 12);
+    // float output_default = w2c_muff_getParamValue(&wasm_app, 0, 52);
+    // float drive_default = w2c_muff_getParamValue(&wasm_app, 0, 56);
+    // float tone_default = w2c_muff_getParamValue(&wasm_app, 0, 60);
+    // float input_default = w2c_muff_getParamValue(&wasm_app, 0, 80);
     
-    std::cout << "  bypass (index 12): " << bypass_default << std::endl;
-    std::cout << "  output (index 52): " << output_default << std::endl;
-    std::cout << "  drive  (index 56): " << drive_default << std::endl;
-    std::cout << "  tone   (index 60): " << tone_default << std::endl;
-    std::cout << "  input  (index 80): " << input_default << std::endl;
+    // std::cout << "  bypass (index 12): " << bypass_default << std::endl;
+    // std::cout << "  output (index 52): " << output_default << std::endl;
+    // std::cout << "  drive  (index 56): " << drive_default << std::endl;
+    // std::cout << "  tone   (index 60): " << tone_default << std::endl;
+    // std::cout << "  input  (index 80): " << input_default << std::endl;
     
     // Set new parameter values
     // std::cout << std::endl << "Setting new parameter values..." << std::endl;
@@ -254,19 +327,19 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     // std::cout << "  input  = 6.0" << std::endl;
     
     // Verify the new values
-    std::cout << std::endl << "Verifying new parameter values:" << std::endl;
-    float bypass_verify = w2c_muff_getParamValue(&wasm_app, 0, 12);
-    float output_verify = w2c_muff_getParamValue(&wasm_app, 0, 52);
-    float drive_verify = w2c_muff_getParamValue(&wasm_app, 0, 56);
-    float tone_verify = w2c_muff_getParamValue(&wasm_app, 0, 60);
-    float input_verify = w2c_muff_getParamValue(&wasm_app, 0, 80);
+    // std::cout << std::endl << "Verifying new parameter values:" << std::endl;
+    // float bypass_verify = w2c_muff_getParamValue(&wasm_app, 0, 12);
+    // float output_verify = w2c_muff_getParamValue(&wasm_app, 0, 52);
+    // float drive_verify = w2c_muff_getParamValue(&wasm_app, 0, 56);
+    // float tone_verify = w2c_muff_getParamValue(&wasm_app, 0, 60);
+    // float input_verify = w2c_muff_getParamValue(&wasm_app, 0, 80);
     
-    std::cout << "  bypass (index 12): " << bypass_verify << std::endl;
-    std::cout << "  output (index 52): " << output_verify << std::endl;
-    std::cout << "  drive  (index 56): " << drive_verify << std::endl;
-    std::cout << "  tone   (index 60): " << tone_verify << std::endl;
-    std::cout << "  input  (index 80): " << input_verify << std::endl;
-    std::cout << "=== PARAMETER TEST COMPLETE ===" << std::endl << std::endl;
+    // std::cout << "  bypass (index 12): " << bypass_verify << std::endl;
+    // std::cout << "  output (index 52): " << output_verify << std::endl;
+    // std::cout << "  drive  (index 56): " << drive_verify << std::endl;
+    // std::cout << "  tone   (index 60): " << tone_verify << std::endl;
+    // std::cout << "  input  (index 80): " << input_verify << std::endl;
+    // std::cout << "=== PARAMETER TEST COMPLETE ===" << std::endl << std::endl;
 
     std::cout << "Testing WASM compute function..." << std::endl;
     
@@ -473,13 +546,17 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         if (parameterIndexMap.count(paramName) > 0)
         {
             int wasmIndex = parameterIndexMap[paramName];
-            float value = param->getValue() * (param->getDefaultValue() != 0 ? param->getDefaultValue() : 1.0f);
+            float value = 0.0f;
             
             // For AudioParameterFloat, scale by range
             if (auto* floatParam = dynamic_cast<juce::AudioParameterFloat*>(param))
             {
                 juce::NormalisableRange<float> range = floatParam->getNormalisableRange();
                 value = range.convertFrom0to1(param->getValue());
+            }
+            else if (auto* boolParam = dynamic_cast<juce::AudioParameterBool*>(param))
+            {
+                value = boolParam->get() ? 1.0f : 0.0f;
             }
             
             w2c_muff_setParamValue(&wasm_app, 0, wasmIndex, value);
@@ -492,7 +569,12 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Read results from WASM memory
     float* output_buffer = (float*)(wasm_memory->data + output_buffer_offset);
     for (u32 i = 0; i < test_buffer_size; i++) {
-        buffer.getWritePointer(0)[i] = output_buffer[i];
+        float sample = output_buffer[i];
+        // Clamp to prevent explosions (safety measure)
+        if (!std::isfinite(sample) || sample > 10.0f || sample < -10.0f) {
+            sample = 0.0f;
+        }
+        buffer.getWritePointer(0)[i] = sample;
     }
 
     // copy channel 0 to all channels
