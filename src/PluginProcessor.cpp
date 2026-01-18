@@ -1,7 +1,9 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "BinaryData.h"
 // #include "wasm-app.h"
 
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <chrono>
 #include <vector>
 #include <algorithm>
@@ -25,6 +27,45 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
      : AudioProcessor (createBusesProperties())
 {
     createParametersAndInitWasm(*this, wasm_app, wasm_memory, parameterIndexMap);
+    
+    // Load the WAV file from binary data
+    std::cout << "Loading audio file from binary data..." << std::endl;
+    
+    int dataSize = 0;
+    const char* data = BinaryData::getNamedResource("RawGTR_wav", dataSize);
+    
+    if (data != nullptr && dataSize > 0)
+    {
+        std::cout << "Binary data found: " << dataSize << " bytes" << std::endl;
+        
+        juce::AudioFormatManager formatManager;
+        formatManager.registerBasicFormats();
+        
+        auto inputStream = std::make_unique<juce::MemoryInputStream>(data, dataSize, false);
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(std::move(inputStream)));
+        
+        if (reader != nullptr)
+        {
+            std::cout << "Audio file loaded successfully!" << std::endl;
+            std::cout << "  Sample rate: " << reader->sampleRate << std::endl;
+            std::cout << "  Num channels: " << reader->numChannels << std::endl;
+            std::cout << "  Length in samples: " << reader->lengthInSamples << std::endl;
+            std::cout << "  Duration: " << (reader->lengthInSamples / reader->sampleRate) << " seconds" << std::endl;
+            
+            audioFileBuffer.setSize(reader->numChannels, (int)reader->lengthInSamples);
+            reader->read(&audioFileBuffer, 0, (int)reader->lengthInSamples, 0, true, true);
+            
+            std::cout << "Audio file loaded into buffer" << std::endl;
+        }
+        else
+        {
+            std::cout << "ERROR: Could not create audio reader!" << std::endl;
+        }
+    }
+    else
+    {
+        std::cout << "ERROR: Binary data not found!" << std::endl;
+    }
 }
 
 AudioPluginAudioProcessor::~AudioPluginAudioProcessor()
@@ -527,10 +568,31 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const u32 input_ptrs_offset = output_buffer_offset + (test_buffer_size * sizeof(float));
     const u32 output_ptrs_offset = input_ptrs_offset + sizeof(u32);
     
-    // Write test input data to WASM memory
+    // Write audio file data to WASM memory (looped playback instead of microphone input)
     float* input_buffer = (float*)(wasm_memory->data + input_buffer_offset);
-    for (u32 i = 0; i < test_buffer_size; i++) {
-        input_buffer[i] = buffer.getReadPointer(0)[i];
+    
+    if (audioFileBuffer.getNumSamples() > 0)
+    {
+        // Use the audio file as input (looped)
+        for (u32 i = 0; i < test_buffer_size; i++)
+        {
+            // Get sample from audio file buffer with looping
+            int filePosition = (playbackPosition + i) % audioFileBuffer.getNumSamples();
+            
+            // Use first channel of the audio file
+            input_buffer[i] = audioFileBuffer.getSample(0, filePosition);
+        }
+        
+        // Update playback position for next block
+        playbackPosition = (playbackPosition + test_buffer_size) % audioFileBuffer.getNumSamples();
+    }
+    else
+    {
+        // Fallback: use the original input from the buffer (microphone)
+        for (u32 i = 0; i < test_buffer_size; i++)
+        {
+            input_buffer[i] = buffer.getReadPointer(0)[i];
+        }
     }
     
     // Create input/output pointer arrays (float** pattern)

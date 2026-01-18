@@ -58,4 +58,8 @@ private:
     
     // Map JUCE parameter IDs to WASM parameter indices
     std::map<juce::String, int> parameterIndexMap;
+    
+    // Audio file playback
+    juce::AudioBuffer<float> audioFileBuffer;
+    int playbackPosition = 0;
 };
