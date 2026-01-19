@@ -390,33 +390,70 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     
     // Allocate buffers in WASM memory (we'll use the end of memory for our test buffers)
     const u32 test_buffer_size = samplesPerBlock; // Process one block
-    const u32 input_buffer_offset = 1024;  // Arbitrary safe offset in WASM memory
-    const u32 output_buffer_offset = 1024 + (test_buffer_size * sizeof(float));
-    const u32 input_ptrs_offset = output_buffer_offset + (test_buffer_size * sizeof(float));
-    const u32 output_ptrs_offset = input_ptrs_offset + sizeof(u32);
+    const u32 input_buffer_L_offset = 1024;  // Arbitrary safe offset in WASM memory
+    const u32 input_buffer_R_offset = 1024 + (test_buffer_size * sizeof(float));
+    const u32 output_buffer_L_offset = 1024 + (test_buffer_size * sizeof(float) * 2);
+    const u32 output_buffer_R_offset = 1024 + (test_buffer_size * sizeof(float) * 3);
+    const u32 input_ptrs_offset = 1024 + (test_buffer_size * sizeof(float) * 4);
+    const u32 output_ptrs_offset = input_ptrs_offset + (sizeof(u32) * 2);
     
-    // Write test input data to WASM memory
-    float* input_buffer = (float*)(wasm_memory->data + input_buffer_offset);
+    // Write test input data to WASM memory (stereo)
+    float* input_buffer_L = (float*)(wasm_memory->data + input_buffer_L_offset);
+    float* input_buffer_R = (float*)(wasm_memory->data + input_buffer_R_offset);
     for (u32 i = 0; i < test_buffer_size; i++) {
-        input_buffer[i] = juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f;
+        input_buffer_L[i] = juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f;
+        input_buffer_R[i] = juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f;
     }
     
-    // Create input/output pointer arrays (float** pattern)
+    // Create input/output pointer arrays (float** pattern) - stereo
     u32* input_ptrs = (u32*)(wasm_memory->data + input_ptrs_offset);
     u32* output_ptrs = (u32*)(wasm_memory->data + output_ptrs_offset);
-    input_ptrs[0] = input_buffer_offset;   // Pointer to input channel 0
-    output_ptrs[0] = output_buffer_offset; // Pointer to output channel 0
+    input_ptrs[0] = input_buffer_L_offset;   // Pointer to input channel 0 (Left)
+    input_ptrs[1] = input_buffer_R_offset;   // Pointer to input channel 1 (Right)
+    output_ptrs[0] = output_buffer_L_offset; // Pointer to output channel 0 (Left)
+    output_ptrs[1] = output_buffer_R_offset; // Pointer to output channel 1 (Right)
     
     std::cout << "Processing " << test_buffer_size << " samples..." << std::endl;
-    w2c_muff_compute(&wasm_app, 0, test_buffer_size, input_ptrs_offset, output_ptrs_offset);
     
-    // Read results from WASM memory
-    float* output_buffer = (float*)(wasm_memory->data + output_buffer_offset);
-    std::cout << "First 8 samples:" << std::endl;
+    // Profile the compute function
+    auto start_time = std::chrono::high_resolution_clock::now();
+    w2c_muff_compute(&wasm_app, 0, test_buffer_size, input_ptrs_offset, output_ptrs_offset);
+    auto end_time = std::chrono::high_resolution_clock::now();
+    
+    auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+    double duration_ms = duration_us / 1000.0;
+    
+    // Calculate real-time performance metrics
+    double buffer_duration_ms = (test_buffer_size * 1000.0) / sampleRate;
+    double cpu_load_percent = (duration_ms / buffer_duration_ms) * 100.0;
+    
+    std::cout << std::endl;
+    std::cout << "=== PERFORMANCE PROFILE ===" << std::endl;
+    std::cout << "Buffer size: " << test_buffer_size << " samples" << std::endl;
+    std::cout << "Buffer duration: " << std::fixed << std::setprecision(3) << buffer_duration_ms << " ms" << std::endl;
+    std::cout << "Processing time: " << std::fixed << std::setprecision(3) << duration_ms << " ms (" << duration_us << " us)" << std::endl;
+    std::cout << "CPU load: " << std::fixed << std::setprecision(1) << cpu_load_percent << "%" << std::endl;
+    if (cpu_load_percent < 50.0) {
+        std::cout << "Status: EXCELLENT - Plenty of headroom" << std::endl;
+    } else if (cpu_load_percent < 80.0) {
+        std::cout << "Status: GOOD - Safe for real-time" << std::endl;
+    } else if (cpu_load_percent < 100.0) {
+        std::cout << "Status: WARNING - Getting close to limit" << std::endl;
+    } else {
+        std::cout << "Status: CRITICAL - Cannot process in real-time!" << std::endl;
+    }
+    std::cout << "========================" << std::endl << std::endl;
+    
+    // Read results from WASM memory (stereo)
+    float* output_buffer_L = (float*)(wasm_memory->data + output_buffer_L_offset);
+    float* output_buffer_R = (float*)(wasm_memory->data + output_buffer_R_offset);
+    std::cout << "First 8 samples (stereo):" << std::endl;
     for (u32 i = 0; i < 8 && i < test_buffer_size; i++) {
         std::cout << std::fixed << std::setprecision(3) 
-                  << "  [" << i << "] in=" << input_buffer[i] 
-                  << " out=" << output_buffer[i] << std::endl;
+                  << "  [" << i << "] L: in=" << input_buffer_L[i] 
+                  << " out=" << output_buffer_L[i]
+                  << " | R: in=" << input_buffer_R[i]
+                  << " out=" << output_buffer_R[i] << std::endl;
     }
     
     // juce::JUCEApplication::quit();
@@ -563,24 +600,30 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     
     // Allocate buffers in WASM memory (we'll use the end of memory for our test buffers)
     const u32 test_buffer_size = buffer.getNumSamples(); // Process one block
-    const u32 input_buffer_offset = 1024;  // Arbitrary safe offset in WASM memory
-    const u32 output_buffer_offset = 1024 + (test_buffer_size * sizeof(float));
-    const u32 input_ptrs_offset = output_buffer_offset + (test_buffer_size * sizeof(float));
-    const u32 output_ptrs_offset = input_ptrs_offset + sizeof(u32);
+    const u32 input_buffer_L_offset = 1024;  // Arbitrary safe offset in WASM memory
+    const u32 input_buffer_R_offset = 1024 + (test_buffer_size * sizeof(float));
+    const u32 output_buffer_L_offset = 1024 + (test_buffer_size * sizeof(float) * 2);
+    const u32 output_buffer_R_offset = 1024 + (test_buffer_size * sizeof(float) * 3);
+    const u32 input_ptrs_offset = 1024 + (test_buffer_size * sizeof(float) * 4);
+    const u32 output_ptrs_offset = input_ptrs_offset + (sizeof(u32) * 2);
     
     // Write audio file data to WASM memory (looped playback instead of microphone input)
-    float* input_buffer = (float*)(wasm_memory->data + input_buffer_offset);
+    float* input_buffer_L = (float*)(wasm_memory->data + input_buffer_L_offset);
+    float* input_buffer_R = (float*)(wasm_memory->data + input_buffer_R_offset);
     
     if (audioFileBuffer.getNumSamples() > 0)
     {
-        // Use the audio file as input (looped)
+        // Use the audio file as input (looped) - stereo
         for (u32 i = 0; i < test_buffer_size; i++)
         {
             // Get sample from audio file buffer with looping
             int filePosition = (playbackPosition + i) % audioFileBuffer.getNumSamples();
             
-            // Use first channel of the audio file
-            input_buffer[i] = audioFileBuffer.getSample(0, filePosition);
+            // Use first channel for both L and R (or use separate channels if available)
+            input_buffer_L[i] = audioFileBuffer.getSample(0, filePosition);
+            input_buffer_R[i] = audioFileBuffer.getNumChannels() > 1 
+                ? audioFileBuffer.getSample(1, filePosition)
+                : audioFileBuffer.getSample(0, filePosition);
         }
         
         // Update playback position for next block
@@ -591,15 +634,20 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // Fallback: use the original input from the buffer (microphone)
         for (u32 i = 0; i < test_buffer_size; i++)
         {
-            input_buffer[i] = buffer.getReadPointer(0)[i];
+            input_buffer_L[i] = buffer.getReadPointer(0)[i];
+            input_buffer_R[i] = totalNumInputChannels > 1 
+                ? buffer.getReadPointer(1)[i]
+                : buffer.getReadPointer(0)[i];
         }
     }
     
-    // Create input/output pointer arrays (float** pattern)
+    // Create input/output pointer arrays (float** pattern) - stereo
     u32* input_ptrs = (u32*)(wasm_memory->data + input_ptrs_offset);
     u32* output_ptrs = (u32*)(wasm_memory->data + output_ptrs_offset);
-    input_ptrs[0] = input_buffer_offset;   // Pointer to input channel 0
-    output_ptrs[0] = output_buffer_offset; // Pointer to output channel 0
+    input_ptrs[0] = input_buffer_L_offset;   // Pointer to input channel 0 (Left)
+    input_ptrs[1] = input_buffer_R_offset;   // Pointer to input channel 1 (Right)
+    output_ptrs[0] = output_buffer_L_offset; // Pointer to output channel 0 (Left)
+    output_ptrs[1] = output_buffer_R_offset; // Pointer to output channel 1 (Right)
     
     // Sync JUCE parameters to WASM before processing
     for (auto* param : getParameters())
@@ -628,21 +676,29 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // std::cout << "Processing " << test_buffer_size << " samples..." << std::endl;
     w2c_muff_compute(&wasm_app, 0, test_buffer_size, input_ptrs_offset, output_ptrs_offset);
     
-    // Read results from WASM memory
-    float* output_buffer = (float*)(wasm_memory->data + output_buffer_offset);
+    // Read results from WASM memory (stereo)
+    float* output_buffer_L = (float*)(wasm_memory->data + output_buffer_L_offset);
+    float* output_buffer_R = (float*)(wasm_memory->data + output_buffer_R_offset);
     for (u32 i = 0; i < test_buffer_size; i++) {
-        float sample = output_buffer[i];
+        float sampleL = output_buffer_L[i];
+        float sampleR = output_buffer_R[i];
         // Clamp to prevent explosions (safety measure)
-        if (!std::isfinite(sample) || sample > 10.0f || sample < -10.0f) {
-            sample = 0.0f;
+        if (!std::isfinite(sampleL) || sampleL > 10.0f || sampleL < -10.0f) {
+            sampleL = 0.0f;
         }
-        buffer.getWritePointer(0)[i] = sample;
+        if (!std::isfinite(sampleR) || sampleR > 10.0f || sampleR < -10.0f) {
+            sampleR = 0.0f;
+        }
+        buffer.getWritePointer(0)[i] = sampleL;
+        if (totalNumOutputChannels > 1) {
+            buffer.getWritePointer(1)[i] = sampleR;
+        }
     }
 
-    // copy channel 0 to all channels
-    for (int channel = 1; channel < totalNumOutputChannels; ++channel)
+    // If we have more than 2 output channels, copy channel 0 and 1 to the rest
+    for (int channel = 2; channel < totalNumOutputChannels; ++channel)
     {
-        buffer.copyFrom(channel, 0, buffer, 0, 0, buffer.getNumSamples());
+        buffer.copyFrom(channel, 0, buffer, channel % 2, 0, buffer.getNumSamples());
     }
 }
 
