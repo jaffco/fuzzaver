@@ -62,4 +62,7 @@ private:
     // Audio file playback
     juce::AudioBuffer<float> audioFileBuffer;
     int playbackPosition = 0;
+    
+    // Bypass parameter
+    juce::AudioParameterBool* bypassParameter = nullptr;
 };

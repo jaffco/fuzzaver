@@ -26,6 +26,12 @@ juce::AudioProcessor::BusesProperties AudioPluginAudioProcessor::createBusesProp
 AudioPluginAudioProcessor::AudioPluginAudioProcessor()
      : AudioProcessor (createBusesProperties())
 {
+    // Add bypass parameter first
+    addParameter(bypassParameter = new juce::AudioParameterBool(
+        "bypass",
+        "Bypass",
+        false));
+    
     createParametersAndInitWasm(*this, wasm_app, wasm_memory, parameterIndexMap);
     
     // Load the WAV file from binary data
@@ -574,6 +580,30 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+    // Check if bypass is enabled
+    bool isBypassed = bypassParameter->get();
+    
+    if (isBypassed)
+    {
+        // Bypass mode: output audio file directly without processing
+        if (audioFileBuffer.getNumSamples() > 0)
+        {
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+            {
+                int filePosition = (playbackPosition + i) % audioFileBuffer.getNumSamples();
+                float sample = audioFileBuffer.getSample(0, filePosition);
+                
+                // Copy to all output channels
+                for (int channel = 0; channel < totalNumOutputChannels; ++channel)
+                {
+                    buffer.getWritePointer(channel)[i] = sample;
+                }
+            }
+            playbackPosition = (playbackPosition + buffer.getNumSamples()) % audioFileBuffer.getNumSamples();
+        }
+        return;
+    }
+
     // In case we have more outputs than inputs, this code clears any output
     // channels that didn't contain input data, (because these aren't
     // guaranteed to be empty - they may contain garbage).
@@ -696,7 +726,7 @@ bool AudioPluginAudioProcessor::hasEditor() const
 
 juce::AudioProcessorEditor* AudioPluginAudioProcessor::createEditor()
 {
-    return new juce::GenericAudioProcessorEditor (*this);
+    return new AudioPluginAudioProcessorEditor (*this);
 }
 
 //==============================================================================
