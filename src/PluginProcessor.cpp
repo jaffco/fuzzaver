@@ -598,32 +598,30 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
 
     
-    // Allocate buffers in WASM memory (we'll use the end of memory for our test buffers)
+    // Allocate buffers in WASM memory (mono processing)
     const u32 test_buffer_size = buffer.getNumSamples(); // Process one block
-    const u32 input_buffer_L_offset = 1024;  // Arbitrary safe offset in WASM memory
-    const u32 input_buffer_R_offset = 1024 + (test_buffer_size * sizeof(float));
-    const u32 output_buffer_L_offset = 1024 + (test_buffer_size * sizeof(float) * 2);
-    const u32 output_buffer_R_offset = 1024 + (test_buffer_size * sizeof(float) * 3);
-    const u32 input_ptrs_offset = 1024 + (test_buffer_size * sizeof(float) * 4);
-    const u32 output_ptrs_offset = input_ptrs_offset + (sizeof(u32) * 2);
+    const u32 input_buffer_mono_offset = 1024;  // Arbitrary safe offset in WASM memory
+    const u32 output_buffer_mono_offset = 1024 + (test_buffer_size * sizeof(float));
+    const u32 input_ptrs_offset = 1024 + (test_buffer_size * sizeof(float) * 2);
+    const u32 output_ptrs_offset = input_ptrs_offset + sizeof(u32);
     
-    // Write audio file data to WASM memory (looped playback instead of microphone input)
-    float* input_buffer_L = (float*)(wasm_memory->data + input_buffer_L_offset);
-    float* input_buffer_R = (float*)(wasm_memory->data + input_buffer_R_offset);
+    // Write audio file data to WASM memory (looped playback, summed to mono)
+    float* input_buffer_mono = (float*)(wasm_memory->data + input_buffer_mono_offset);
     
     if (audioFileBuffer.getNumSamples() > 0)
     {
-        // Use the audio file as input (looped) - stereo
+        // Use the audio file as input (looped) - summed to mono
         for (u32 i = 0; i < test_buffer_size; i++)
         {
             // Get sample from audio file buffer with looping
             int filePosition = (playbackPosition + i) % audioFileBuffer.getNumSamples();
             
-            // Use first channel for both L and R (or use separate channels if available)
-            input_buffer_L[i] = audioFileBuffer.getSample(0, filePosition);
-            input_buffer_R[i] = audioFileBuffer.getNumChannels() > 1 
+            // Sum stereo to mono
+            float sampleL = audioFileBuffer.getSample(0, filePosition);
+            float sampleR = audioFileBuffer.getNumChannels() > 1 
                 ? audioFileBuffer.getSample(1, filePosition)
-                : audioFileBuffer.getSample(0, filePosition);
+                : sampleL;
+            input_buffer_mono[i] = (sampleL + sampleR) * 0.5f;
         }
         
         // Update playback position for next block
@@ -631,23 +629,22 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
     else
     {
-        // Fallback: use the original input from the buffer (microphone)
+        // Fallback: use the original input from the buffer (microphone), summed to mono
         for (u32 i = 0; i < test_buffer_size; i++)
         {
-            input_buffer_L[i] = buffer.getReadPointer(0)[i];
-            input_buffer_R[i] = totalNumInputChannels > 1 
+            float sampleL = buffer.getReadPointer(0)[i];
+            float sampleR = totalNumInputChannels > 1 
                 ? buffer.getReadPointer(1)[i]
-                : buffer.getReadPointer(0)[i];
+                : sampleL;
+            input_buffer_mono[i] = (sampleL + sampleR) * 0.5f;
         }
     }
     
-    // Create input/output pointer arrays (float** pattern) - stereo
+    // Create input/output pointer arrays (float** pattern) - mono
     u32* input_ptrs = (u32*)(wasm_memory->data + input_ptrs_offset);
     u32* output_ptrs = (u32*)(wasm_memory->data + output_ptrs_offset);
-    input_ptrs[0] = input_buffer_L_offset;   // Pointer to input channel 0 (Left)
-    input_ptrs[1] = input_buffer_R_offset;   // Pointer to input channel 1 (Right)
-    output_ptrs[0] = output_buffer_L_offset; // Pointer to output channel 0 (Left)
-    output_ptrs[1] = output_buffer_R_offset; // Pointer to output channel 1 (Right)
+    input_ptrs[0] = input_buffer_mono_offset;   // Pointer to mono input
+    output_ptrs[0] = output_buffer_mono_offset; // Pointer to mono output
     
     // Sync JUCE parameters to WASM before processing
     for (auto* param : getParameters())
@@ -676,29 +673,18 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // std::cout << "Processing " << test_buffer_size << " samples..." << std::endl;
     w2c_muff_compute(&wasm_app, 0, test_buffer_size, input_ptrs_offset, output_ptrs_offset);
     
-    // Read results from WASM memory (stereo)
-    float* output_buffer_L = (float*)(wasm_memory->data + output_buffer_L_offset);
-    float* output_buffer_R = (float*)(wasm_memory->data + output_buffer_R_offset);
+    // Read results from WASM memory (mono) and copy to all output channels
+    float* output_buffer_mono = (float*)(wasm_memory->data + output_buffer_mono_offset);
     for (u32 i = 0; i < test_buffer_size; i++) {
-        float sampleL = output_buffer_L[i];
-        float sampleR = output_buffer_R[i];
+        float sample = output_buffer_mono[i];
         // Clamp to prevent explosions (safety measure)
-        if (!std::isfinite(sampleL) || sampleL > 10.0f || sampleL < -10.0f) {
-            sampleL = 0.0f;
+        if (!std::isfinite(sample) || sample > 10.0f || sample < -10.0f) {
+            sample = 0.0f;
         }
-        if (!std::isfinite(sampleR) || sampleR > 10.0f || sampleR < -10.0f) {
-            sampleR = 0.0f;
+        // Copy mono output to all channels
+        for (int channel = 0; channel < totalNumOutputChannels; ++channel) {
+            buffer.getWritePointer(channel)[i] = sample;
         }
-        buffer.getWritePointer(0)[i] = sampleL;
-        if (totalNumOutputChannels > 1) {
-            buffer.getWritePointer(1)[i] = sampleR;
-        }
-    }
-
-    // If we have more than 2 output channels, copy channel 0 and 1 to the rest
-    for (int channel = 2; channel < totalNumOutputChannels; ++channel)
-    {
-        buffer.copyFrom(channel, 0, buffer, channel % 2, 0, buffer.getNumSamples());
     }
 }
 

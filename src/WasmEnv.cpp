@@ -47,3 +47,10 @@ f32 w2c_env_0x5Fsinf(struct w2c_env* env, f32 angle)
     (void)env; // Unused parameter
     return std::sinf(angle);
 }
+
+// Implement roundf for WASM module
+f32 w2c_env_0x5Froundf(struct w2c_env* env, f32 x)
+{
+    (void)env; // Unused parameter
+    return std::roundf(x);
+}
