@@ -145,10 +145,14 @@ jobs:
         working-directory: ${{ env.BUILD_DIR }}
         run: ctest --verbose --output-on-failure
 
-      - name: Read in .env from CMake # see GitHubENV.cmake
+      - name: Extract project config from CMakeLists.txt
         run: |
-          cat .env # show us the config
-          cat .env >> $GITHUB_ENV # pull in our PRODUCT_NAME, etc
+          PROJECT_NAME=$(grep 'set(PROJECT_NAME' CMakeLists.txt | sed 's/set(PROJECT_NAME \([^)]*\))/\1/')
+          VERSION=$(grep 'project(' CMakeLists.txt | sed 's/.*VERSION \([^)]*\))/\1/')
+          PRODUCT_NAME=$(grep 'PRODUCT_NAME' CMakeLists.txt | sed 's/.*PRODUCT_NAME "\([^"]*\)".*/\1/')
+          echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "PRODUCT_NAME=$PRODUCT_NAME" >> $GITHUB_ENV
 
       - name: Set additional env vars for next steps
         run: |
