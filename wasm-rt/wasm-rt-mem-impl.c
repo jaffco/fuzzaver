@@ -96,7 +96,9 @@ static int os_mprotect(void* addr, size_t size) {
   return -1;
 }
 
+#ifndef _MSC_VER
 __attribute__((weak))
+#endif
 void os_print_last_error(const char* msg) {
   DWORD errorMessageID = GetLastError();
   if (errorMessageID != 0) {
@@ -133,7 +135,9 @@ static int os_mprotect(void* addr, size_t size) {
   return mprotect(addr, size, PROT_READ | PROT_WRITE);
 }
 
+#ifndef _MSC_VER
 __attribute__((weak))
+#endif
 void os_print_last_error(const char* msg) {
   perror(msg);
 }
