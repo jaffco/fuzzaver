@@ -3,15 +3,11 @@
 #include "PluginProcessor.h"
 
 //==============================================================================
-class AudioPluginAudioProcessorEditor final : public juce::AudioProcessorEditor
+class AudioPluginAudioProcessorEditor final : public juce::GenericAudioProcessorEditor
 {
 public:
     explicit AudioPluginAudioProcessorEditor (AudioPluginAudioProcessor&);
     ~AudioPluginAudioProcessorEditor() override;
-
-    //==============================================================================
-    void paint (juce::Graphics&) override;
-    void resized() override;
 
 private:
     // This reference is provided as a quick way for your editor to

@@ -64,6 +64,25 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
     {
         std::cout << "ERROR: Binary data not found!" << std::endl;
     }
+    
+    // Create parameters
+    parameterGroup = std::make_unique<juce::AudioProcessorParameterGroup>("parameters", "Parameters", "|");
+    
+    leftShiftParam = new juce::AudioParameterFloat("leftShift", "Left Shift (semitones)", -12.0f, 12.0f, -12.0f);
+    rightShiftParam = new juce::AudioParameterFloat("rightShift", "Right Shift (semitones)", -12.0f, 12.0f, 12.0f);
+    leftWindowParam = new juce::AudioParameterFloat("leftWindow", "Left Window (samples)", 50.0f, 10000.0f, 1000.0f);
+    rightWindowParam = new juce::AudioParameterFloat("rightWindow", "Right Window (samples)", 50.0f, 10000.0f, 1000.0f);
+    leftXfadeParam = new juce::AudioParameterFloat("leftXfade", "Left Xfade (samples)", 1.0f, 10000.0f, 10.0f);
+    rightXfadeParam = new juce::AudioParameterFloat("rightXfade", "Right Xfade (samples)", 1.0f, 10000.0f, 10.0f);
+    
+    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(leftShiftParam));
+    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(rightShiftParam));
+    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(leftWindowParam));
+    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(rightWindowParam));
+    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(leftXfadeParam));
+    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(rightXfadeParam));
+    
+    addParameterGroup(std::move(parameterGroup));
 }
 
 AudioPluginAudioProcessor::~AudioPluginAudioProcessor()
@@ -141,6 +160,19 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
     juce::ignoreUnused (sampleRate, samplesPerBlock);
+    
+    // Initialize pitch shifters
+    pitchShifterLeft.init(static_cast<int>(sampleRate));
+    pitchShifterRight.init(static_cast<int>(sampleRate));
+    
+    // Set pitch shift parameters from current parameter values
+    pitchShifterLeft.fHslider1 = *leftShiftParam;    // shift (semitones)
+    pitchShifterLeft.fHslider0 = *leftWindowParam;   // window (samples)
+    pitchShifterLeft.fHslider2 = *leftXfadeParam;    // xfade (samples)
+    
+    pitchShifterRight.fHslider1 = *rightShiftParam;  // shift (semitones)
+    pitchShifterRight.fHslider0 = *rightWindowParam; // window (samples)
+    pitchShifterRight.fHslider2 = *rightXfadeParam;  // xfade (samples)
 }
 
 void AudioPluginAudioProcessor::releaseResources()
@@ -191,26 +223,64 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    // Simple audio file playback
+    // Simple audio file playback with pitch shifting
     if (audioFileBuffer.getNumSamples() > 0)
     {
         int numSamples = buffer.getNumSamples();
         int numChannels = totalNumOutputChannels;
+        int fileChannels = audioFileBuffer.getNumChannels();
 
-        // Read from channel 0 of the audio file
-        const float* fileData = audioFileBuffer.getReadPointer(0);
-
+        // Temporary buffers for pitch shifting
+        juce::AudioBuffer<float> tempBuffer(1, numSamples); // FAUST processes mono
+        juce::AudioBuffer<float> originalBuffer(1, numSamples); // Store original audio
+        
         for (int channel = 0; channel < numChannels; ++channel)
         {
             float* outputData = buffer.getWritePointer(channel);
-
+            
+            // Read from the appropriate channel of the audio file
+            int fileChannel = std::min(channel, fileChannels - 1);
+            const float* fileData = audioFileBuffer.getReadPointer(fileChannel);
+            
+            // Fill temp buffer with file data (for processing) and original buffer
+            float* tempData = tempBuffer.getWritePointer(0);
+            float* originalData = originalBuffer.getWritePointer(0);
             for (int sample = 0; sample < numSamples; ++sample)
             {
                 int pos = playbackPosition + sample;
                 if (pos >= audioFileBuffer.getNumSamples())
                     pos %= audioFileBuffer.getNumSamples(); // loop
-
-                outputData[sample] = fileData[pos];
+                
+                float sampleValue = fileData[pos];
+                tempData[sample] = sampleValue;
+                originalData[sample] = sampleValue;
+            }
+            
+            // Update pitch shifter parameters from current parameter values
+            pitchShifterLeft.fHslider1 = *leftShiftParam;    // shift (semitones)
+            pitchShifterLeft.fHslider0 = *leftWindowParam;   // window (samples)
+            pitchShifterLeft.fHslider2 = *leftXfadeParam;    // xfade (samples)
+            
+            pitchShifterRight.fHslider1 = *rightShiftParam;  // shift (semitones)
+            pitchShifterRight.fHslider0 = *rightWindowParam; // window (samples)
+            pitchShifterRight.fHslider2 = *rightXfadeParam;  // xfade (samples)
+            
+            // Apply pitch shifting
+            float* inputOutputPtr[1] = {tempData};
+            
+            if (channel == 0) // Left channel
+            {
+                pitchShifterLeft.compute(numSamples, inputOutputPtr, inputOutputPtr);
+            }
+            else if (channel == 1) // Right channel
+            {
+                pitchShifterRight.compute(numSamples, inputOutputPtr, inputOutputPtr);
+            }
+            
+            // Add processed data to original data (additive processing)
+            for (int sample = 0; sample < numSamples; ++sample)
+            {
+                outputData[sample] = originalData[sample] + tempData[sample];
             }
         }
 

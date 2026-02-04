@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "fausts/pitchShifter.cpp"
 
 //==============================================================================
 class AudioPluginAudioProcessor final : public juce::AudioProcessor
@@ -51,4 +52,17 @@ private:
     // Audio file playback
     juce::AudioBuffer<float> audioFileBuffer;
     int playbackPosition = 0;
+    
+    // Pitch shifters
+    mydsp pitchShifterLeft;
+    mydsp pitchShifterRight;
+    
+    // Parameters
+    std::unique_ptr<juce::AudioProcessorParameterGroup> parameterGroup;
+    juce::AudioParameterFloat* leftShiftParam;
+    juce::AudioParameterFloat* rightShiftParam;
+    juce::AudioParameterFloat* leftWindowParam;
+    juce::AudioParameterFloat* rightWindowParam;
+    juce::AudioParameterFloat* leftXfadeParam;
+    juce::AudioParameterFloat* rightXfadeParam;
 };
