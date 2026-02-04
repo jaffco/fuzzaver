@@ -6,6 +6,6 @@ cmake ..
 
 cmake --build . --parallel
 
-cd ./KICKSTART_artefacts/Standalone/KICKSTART.app/Contents/MacOS
+cd ./FUZZAVER_artefacts/Standalone/FUZZAVER.app/Contents/MacOS
 
-./KICKSTART
+./FUZZAVER
