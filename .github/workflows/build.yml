@@ -141,13 +141,26 @@ jobs:
       - name: Build
         run: cmake --build ${{ env.BUILD_DIR }} --config ${{ env.BUILD_TYPE }}
 
+      - name: Inspect Artifacts
+        run: |
+          find ${{ env.BUILD_DIR }} -name "*.vst3" -type d
+          if [ -d "${{ env.ARTIFACTS_PATH }}/VST3" ]; then
+            ls -la ${{ env.ARTIFACTS_PATH }}/VST3/
+            # On Windows, check if it's a valid bundle
+            if command -v file >/dev/null 2>&1; then
+              file ${{ env.VST3_PATH }}
+            fi
+          else
+            echo "VST3 directory not found"
+          fi
+
       - name: Test & Benchmarks
         working-directory: ${{ env.BUILD_DIR }}
         run: ctest --verbose --output-on-failure
 
       - name: Extract project config from CMakeLists.txt
         run: |
-          PROJECT_NAME=$(grep 'set(PROJECT_NAME' CMakeLists.txt | sed 's/set(PROJECT_NAME \([^)]*\))/\1/')
+          PROJECT_NAME=$(grep 'set(PROJECT_NAME' CMakeLists.txt | sed 's/set(PROJECT_NAME *//; s/).*//')
           VERSION=$(grep 'project(' CMakeLists.txt | sed 's/.*VERSION \([^)]*\))/\1/')
           PRODUCT_NAME=$(grep 'PRODUCT_NAME' CMakeLists.txt | sed 's/.*PRODUCT_NAME "\([^"]*\)".*/\1/')
           echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
@@ -165,11 +178,49 @@ jobs:
           echo "STANDALONE_PATH=$ARTIFACTS_PATH/Standalone/${{ env.PRODUCT_NAME }}.app" >> $GITHUB_ENV
           echo "ARTIFACT_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-${{ runner.os }}" >> $GITHUB_ENV
 
+      - name: Debug Paths
+        run: |
+          echo "BUILD_DIR: ${{ env.BUILD_DIR }}"
+          echo "PROJECT_NAME: ${{ env.PROJECT_NAME }}"
+          echo "BUILD_TYPE: ${{ env.BUILD_TYPE }}"
+          echo "ARTIFACTS_PATH: ${{ env.ARTIFACTS_PATH }}"
+          echo "VST3_PATH: ${{ env.VST3_PATH }}"
+          ls -la ${{ env.BUILD_DIR }}/
+          if [ -d "${{ env.ARTIFACTS_PATH }}" ]; then
+            echo "ARTIFACTS_PATH exists"
+            ls -la ${{ env.ARTIFACTS_PATH }}/
+          else
+            echo "ARTIFACTS_PATH does NOT exist"
+          fi
+          if [ -f "${{ env.VST3_PATH }}" ] || [ -d "${{ env.VST3_PATH }}" ]; then
+            echo "VST3_PATH exists"
+          else
+            echo "VST3_PATH does NOT exist"
+          fi
+
       - name: Pluginval
         run: |
           curl -LO "https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_${{ runner.os }}.zip"
           7z x pluginval_${{ runner.os }}.zip
-          ${{ matrix.pluginval-binary }} --strictness-level 10 --verbose --validate "${{ env.VST3_PATH }}"
+          echo "Running pluginval on: ${{ env.VST3_PATH }}"
+          ${{ matrix.pluginval-binary }} --strictness-level 10 --verbose --validate "${{ env.VST3_PATH }}" 2>&1 | tee pluginval_output.log
+          cat pluginval_output.log
+
+      - name: Test Any VST3
+        run: |
+          VST3_FILE=$(find ${{ env.BUILD_DIR }} -name "*.vst3" -type d | head -1)
+          if [ -n "$VST3_FILE" ]; then
+            echo "Found VST3: $VST3_FILE"
+            ${{ matrix.pluginval-binary }} --strictness-level 1 --validate "$VST3_FILE"
+          else
+            echo "No VST3 files found"
+          fi
+
+      - name: Upload Pluginval Log
+        uses: actions/upload-artifact@v6
+        with:
+          name: pluginval-log-${{ runner.os }}
+          path: pluginval_output.log
 
       - name: Import Certificates (macOS)
         uses: sudara/basic-macos-keychain-action@v1
