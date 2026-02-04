@@ -12,7 +12,7 @@ concurrency:
 
 env:
   BUILD_TYPE: Release
-  BUILD_DIR: Builds
+  BUILD_DIR: build
   DISPLAY: :0 # linux pluginval needs this
   HOMEBREW_NO_INSTALL_CLEANUP: 1
   SCCACHE_GHA_ENABLED: true
@@ -36,9 +36,11 @@ jobs:
       matrix:
         include:
           - name: Linux
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             pluginval-binary: ./pluginval
             extra-flags: -G Ninja
+            wabt_archive: wabt-1.0.39-linux-x64.tar.gz
+            wabt_dir: wabt-1.0.39
           - name: macOS
             os: macos-14
             pluginval-binary: pluginval.app/Contents/MacOS/pluginval
@@ -46,6 +48,8 @@ jobs:
           - name: Windows
             os: windows-latest
             pluginval-binary: ./pluginval.exe
+            wabt_archive: wabt-1.0.39-windows-x64.tar.gz
+            wabt_dir: wabt-1.0.39
 
     steps:
       # Setup MSVC toolchain and developer command prompt (Windows)
@@ -84,7 +88,49 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          submodules: recursive
+          submodules: recursive        
+
+      - name: Install WABT from GitHub Releases
+        if: runner.os != 'macOS'
+        run: |
+          WABT_VERSION="1.0.39"
+          DOWNLOAD_URL="https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${{ matrix.wabt_archive }}"
+          
+          echo "Downloading WABT ${WABT_VERSION} for ${{ matrix.name }}..."
+          curl -LO "${DOWNLOAD_URL}"
+          
+          echo "Extracting WABT..."
+          tar -xzf "${{ matrix.wabt_archive }}"
+          
+          # Add WABT bin directory to PATH
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            echo "$(pwd)/${{ matrix.wabt_dir }}/bin" >> $GITHUB_PATH
+            # Verify wasm2c works
+            export PATH="$(pwd)/${{ matrix.wabt_dir }}/bin:$PATH"
+            wasm2c --version || echo "Warning: wasm2c test failed"
+          else
+            echo "$(pwd)/${{ matrix.wabt_dir }}/bin" >> $GITHUB_PATH
+          fi
+          
+          echo "WABT installed successfully!"
+        shell: bash
+      
+      - name: Install WABT (macOS)
+        if: runner.os == 'macOS'
+        run: brew install wabt
+      
+      - name: Verify WASM Tools
+        run: |
+          echo "Checking installed WASM tools..."
+          wasm2c --version || echo "⚠️  wasm2c not found (required)"
+          wasm-opt --version || echo "⚠️  wasm-opt not found (optional)"
+        shell: bash
+
+      - name: Generate WASM C code
+        run: |
+          mkdir -p ${{ env.BUILD_DIR }}
+          wasm2c --no-debug-names --module-name="ts9" --num-outputs=8 TS9_OverdriveFaustGenerated.wasm -o ${{ env.BUILD_DIR }}/wasm-ts9.c
+        shell: bash
 
       - name: Cache the build
         uses: mozilla-actions/sccache-action@v0.0.9
