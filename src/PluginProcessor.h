@@ -2,6 +2,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "fausts/pitchShifter.cpp"
+#include "wasm-ts9.h"
+#include <map>
 
 //==============================================================================
 class AudioPluginAudioProcessor final : public juce::AudioProcessor
@@ -48,10 +50,19 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioPluginAudioProcessor)
     
     static juce::AudioProcessor::BusesProperties createBusesProperties();
+    static void createTS9ParametersAndInitWasm(juce::AudioProcessor& processor,
+                                                w2c_ts9& wasm_app,
+                                                wasm_rt_memory_t*& wasm_memory,
+                                                std::map<juce::String, int>& parameterIndexMap);
     
     // Audio file playback
     juce::AudioBuffer<float> audioFileBuffer;
     int playbackPosition = 0;
+    
+    // TS9 WASM module
+    w2c_ts9 ts9WasmApp;
+    wasm_rt_memory_t* ts9WasmMemory = nullptr;
+    std::map<juce::String, int> ts9ParameterIndexMap;
     
     // Pitch shifters
     mydsp pitchShifterLeft;
