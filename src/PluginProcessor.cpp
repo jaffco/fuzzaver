@@ -70,23 +70,13 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
     }
     
     // Create parameters
-    parameterGroup = std::make_unique<juce::AudioProcessorParameterGroup>("parameters", "Parameters", "|");
-    
-    leftShiftParam = new juce::AudioParameterFloat("leftShift", "Left Shift (semitones)", -12.0f, 12.0f, -12.0f);
-    rightShiftParam = new juce::AudioParameterFloat("rightShift", "Right Shift (semitones)", -12.0f, 12.0f, 12.0f);
-    leftWindowParam = new juce::AudioParameterFloat("leftWindow", "Left Window (samples)", 50.0f, 10000.0f, 2500.0f);
-    rightWindowParam = new juce::AudioParameterFloat("rightWindow", "Right Window (samples)", 50.0f, 10000.0f, 2500.0f);
-    leftXfadeParam = new juce::AudioParameterFloat("leftXfade", "Left Xfade (samples)", 1.0f, 10000.0f, 1500.0f);
-    rightXfadeParam = new juce::AudioParameterFloat("rightXfade", "Right Xfade (samples)", 1.0f, 10000.0f, 1500.0f);
-    
-    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(leftShiftParam));
-    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(rightShiftParam));
-    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(leftWindowParam));
-    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(rightWindowParam));
-    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(leftXfadeParam));
-    parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(rightXfadeParam));
-    
-    addParameterGroup(std::move(parameterGroup));
+    addParameter(useWavFileParam = new juce::AudioParameterBool("useWavFile", "Use WAV File", true));
+    addParameter(leftShiftParam = new juce::AudioParameterFloat("leftShift", "Left Shift (semitones)", -12.0f, 12.0f, -12.0f));
+    addParameter(rightShiftParam = new juce::AudioParameterFloat("rightShift", "Right Shift (semitones)", -12.0f, 12.0f, 12.0f));
+    addParameter(leftWindowParam = new juce::AudioParameterFloat("leftWindow", "Left Window (samples)", 50.0f, 10000.0f, 2500.0f));
+    addParameter(rightWindowParam = new juce::AudioParameterFloat("rightWindow", "Right Window (samples)", 50.0f, 10000.0f, 2500.0f));
+    addParameter(leftXfadeParam = new juce::AudioParameterFloat("leftXfade", "Left Xfade (samples)", 1.0f, 10000.0f, 1500.0f));
+    addParameter(rightXfadeParam = new juce::AudioParameterFloat("rightXfade", "Right Xfade (samples)", 1.0f, 10000.0f, 1500.0f));
 }
 
 AudioPluginAudioProcessor::~AudioPluginAudioProcessor()
@@ -440,9 +430,12 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    // Simple audio file playback with TS9 processing then pitch shifting
-    if (audioFileBuffer.getNumSamples() > 0)
+    // Check if we should use WAV file or real audio input
+    bool useWavFile = useWavFileParam->get();
+    
+    if (useWavFile && audioFileBuffer.getNumSamples() > 0)
     {
+        // ===== PROCESS WAV FILE =====
         int numSamples = buffer.getNumSamples();
         int numChannels = totalNumOutputChannels;
         int fileChannels = audioFileBuffer.getNumChannels();
@@ -579,6 +572,138 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         playbackPosition += numSamples;
         if (playbackPosition >= audioFileBuffer.getNumSamples())
             playbackPosition %= audioFileBuffer.getNumSamples();
+    }
+    else if (!useWavFile)
+    {
+        // ===== PROCESS REAL AUDIO INPUT =====
+        int numSamples = buffer.getNumSamples();
+        int numChannels = totalNumOutputChannels;
+        
+        // ===== STEP 1: Prepare real audio input for TS9 processing =====
+        // Create a mono buffer for TS9 WASM processing from input buffer
+        juce::AudioBuffer<float> ts9InputBuffer(1, numSamples);
+        float* ts9InputData = ts9InputBuffer.getWritePointer(0);
+        
+        // Sum input channels to mono for TS9 input
+        for (int sample = 0; sample < numSamples; ++sample)
+        {
+            float sum = 0.0f;
+            for (int channel = 0; channel < totalNumInputChannels; ++channel)
+            {
+                sum += buffer.getSample(channel, sample);
+            }
+            ts9InputData[sample] = sum / (float)totalNumInputChannels; // Average to mono
+        }
+        
+        // ===== STEP 2: Process through TS9 WASM =====
+        // Sync JUCE parameters to TS9 WASM
+        for (auto* param : getParameters())
+        {
+            juce::String paramName = param->getName(100);
+            
+            if (!paramName.startsWith("TS9 "))
+                continue;
+                
+            juce::String originalLabel = paramName.substring(4);
+            
+            if (ts9ParameterIndexMap.count(originalLabel) > 0)
+            {
+                int wasmIndex = ts9ParameterIndexMap[originalLabel];
+                float value = 0.0f;
+                
+                if (auto* floatParam = dynamic_cast<juce::AudioParameterFloat*>(param))
+                {
+                    juce::NormalisableRange<float> range = floatParam->getNormalisableRange();
+                    value = range.convertFrom0to1(param->getValue());
+                }
+                else if (auto* boolParam = dynamic_cast<juce::AudioParameterBool*>(param))
+                {
+                    value = boolParam->get() ? 1.0f : 0.0f;
+                }
+                
+                w2c_ts9_setParamValue(&ts9WasmApp, 0, wasmIndex, value);
+            }
+        }
+        
+        // Setup TS9 WASM buffers in memory
+        const u32 ts9_buffer_size = numSamples;
+        const u32 ts9_input_buffer_offset = 1024;
+        const u32 ts9_output_buffer_offset = 1024 + (ts9_buffer_size * sizeof(float));
+        const u32 ts9_input_ptrs_offset = 1024 + (ts9_buffer_size * sizeof(float) * 2);
+        const u32 ts9_output_ptrs_offset = ts9_input_ptrs_offset + sizeof(u32);
+        
+        // Write input to WASM memory
+        float* ts9_wasm_input = (float*)(ts9WasmMemory->data + ts9_input_buffer_offset);
+        for (u32 i = 0; i < ts9_buffer_size; i++)
+        {
+            ts9_wasm_input[i] = ts9InputData[i];
+        }
+        
+        // Create input/output pointer arrays (mono processing)
+        u32* ts9_input_ptrs = (u32*)(ts9WasmMemory->data + ts9_input_ptrs_offset);
+        u32* ts9_output_ptrs = (u32*)(ts9WasmMemory->data + ts9_output_ptrs_offset);
+        ts9_input_ptrs[0] = ts9_input_buffer_offset;
+        ts9_output_ptrs[0] = ts9_output_buffer_offset;
+        
+        // Process through TS9
+        w2c_ts9_compute(&ts9WasmApp, 0, ts9_buffer_size, ts9_input_ptrs_offset, ts9_output_ptrs_offset);
+        
+        // Read TS9 output from WASM memory
+        float* ts9_wasm_output = (float*)(ts9WasmMemory->data + ts9_output_buffer_offset);
+        juce::AudioBuffer<float> ts9OutputBuffer(1, numSamples);
+        float* ts9OutputData = ts9OutputBuffer.getWritePointer(0);
+        for (u32 i = 0; i < ts9_buffer_size; i++)
+        {
+            float sample = ts9_wasm_output[i];
+            // Clamp to prevent explosions
+            if (!std::isfinite(sample) || sample > 10.0f || sample < -10.0f)
+                sample = 0.0f;
+            ts9OutputData[i] = sample;
+        }
+        
+        // ===== STEP 3: Apply pitch shifting to TS9-processed audio =====
+        // Temporary buffers for pitch shifting
+        juce::AudioBuffer<float> tempBuffer(1, numSamples); // FAUST processes mono
+        
+        for (int channel = 0; channel < numChannels; ++channel)
+        {
+            float* outputData = buffer.getWritePointer(channel);
+            
+            // Fill temp buffer with TS9-processed data (for pitch shifting)
+            float* tempData = tempBuffer.getWritePointer(0);
+            for (int sample = 0; sample < numSamples; ++sample)
+            {
+                // Use TS9-processed audio as input to pitch shifter
+                tempData[sample] = ts9OutputData[sample];
+            }
+            
+            // Update pitch shifter parameters from current parameter values
+            pitchShifterLeft.fHslider1 = *leftShiftParam;    // shift (semitones)
+            pitchShifterLeft.fHslider0 = *leftWindowParam;   // window (samples)
+            pitchShifterLeft.fHslider2 = *leftXfadeParam;    // xfade (samples)
+            
+            pitchShifterRight.fHslider1 = *rightShiftParam;  // shift (semitones)
+            pitchShifterRight.fHslider0 = *rightWindowParam; // window (samples)
+            pitchShifterRight.fHslider2 = *rightXfadeParam;  // xfade (samples)
+            
+            // Apply pitch shifting to TS9-processed audio
+            float* inputOutputPtr[1] = {tempData};
+            
+            if (channel == 0) // Left channel
+            {
+                pitchShifterLeft.compute(numSamples, inputOutputPtr, inputOutputPtr);
+            }
+            else if (channel == 1) // Right channel
+            {
+                pitchShifterRight.compute(numSamples, inputOutputPtr, inputOutputPtr);
+            }
+            
+            // Mix: TS9-processed audio (dry) + pitch-shifted TS9-processed audio
+            for (int sample = 0; sample < numSamples; ++sample)
+            {
+                outputData[sample] = ts9OutputData[sample] + tempData[sample];
+            }
+        }
     }
 }
 

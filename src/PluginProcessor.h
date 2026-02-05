@@ -69,11 +69,11 @@ private:
     mydsp pitchShifterRight;
     
     // Parameters
-    std::unique_ptr<juce::AudioProcessorParameterGroup> parameterGroup;
     juce::AudioParameterFloat* leftShiftParam;
     juce::AudioParameterFloat* rightShiftParam;
     juce::AudioParameterFloat* leftWindowParam;
     juce::AudioParameterFloat* rightWindowParam;
     juce::AudioParameterFloat* leftXfadeParam;
     juce::AudioParameterFloat* rightXfadeParam;
+    juce::AudioParameterBool* useWavFileParam;
 };
