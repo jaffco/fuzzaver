@@ -14,7 +14,7 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 DefaultDirName={pf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
-OutputDir=packaging\Output
+OutputDir=Output
 OutputBaseFilename=FUZZAVER-0.0.1-Windows
 Compression=lzma
 SolidCompression=yes
@@ -24,8 +24,8 @@ ArchitecturesInstallIn64BitMode=x64
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "build\FUZZAVER_artefacts\Release\VST3\FUZZAVER.vst3"; DestDir: "{code:GetVST3Dir}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "build\FUZZAVER_artefacts\Release\Standalone\FUZZAVER.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\FUZZAVER_artefacts\Release\VST3\FUZZAVER.vst3"; DestDir: "{code:GetVST3Dir}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\build\FUZZAVER_artefacts\Release\Standalone\FUZZAVER.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
