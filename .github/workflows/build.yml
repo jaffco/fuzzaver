@@ -167,6 +167,10 @@ jobs:
           PROJECT_NAME=$(grep 'set(PROJECT_NAME' CMakeLists.txt | sed 's/set(PROJECT_NAME *//; s/).*//')
           VERSION=$(grep 'project(' CMakeLists.txt | sed 's/.*VERSION \([^)]*\))/\1/')
           PRODUCT_NAME=$(grep 'PRODUCT_NAME' CMakeLists.txt | sed 's/.*PRODUCT_NAME "\([^"]*\)".*/\1/')
+          # Trim carriage returns that may be present due to CRLF line endings
+          PROJECT_NAME=$(echo $PROJECT_NAME | tr -d '\r')
+          VERSION=$(echo $VERSION | tr -d '\r')
+          PRODUCT_NAME=$(echo $PRODUCT_NAME | tr -d '\r')
           echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "PRODUCT_NAME=$PRODUCT_NAME" >> $GITHUB_ENV
