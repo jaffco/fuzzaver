@@ -74,10 +74,10 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
     
     leftShiftParam = new juce::AudioParameterFloat("leftShift", "Left Shift (semitones)", -12.0f, 12.0f, -12.0f);
     rightShiftParam = new juce::AudioParameterFloat("rightShift", "Right Shift (semitones)", -12.0f, 12.0f, 12.0f);
-    leftWindowParam = new juce::AudioParameterFloat("leftWindow", "Left Window (samples)", 50.0f, 10000.0f, 1000.0f);
-    rightWindowParam = new juce::AudioParameterFloat("rightWindow", "Right Window (samples)", 50.0f, 10000.0f, 1000.0f);
-    leftXfadeParam = new juce::AudioParameterFloat("leftXfade", "Left Xfade (samples)", 1.0f, 10000.0f, 10.0f);
-    rightXfadeParam = new juce::AudioParameterFloat("rightXfade", "Right Xfade (samples)", 1.0f, 10000.0f, 10.0f);
+    leftWindowParam = new juce::AudioParameterFloat("leftWindow", "Left Window (samples)", 50.0f, 10000.0f, 2500.0f);
+    rightWindowParam = new juce::AudioParameterFloat("rightWindow", "Right Window (samples)", 50.0f, 10000.0f, 2500.0f);
+    leftXfadeParam = new juce::AudioParameterFloat("leftXfade", "Left Xfade (samples)", 1.0f, 10000.0f, 1500.0f);
+    rightXfadeParam = new juce::AudioParameterFloat("rightXfade", "Right Xfade (samples)", 1.0f, 10000.0f, 1500.0f);
     
     parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(leftShiftParam));
     parameterGroup->addChild(std::unique_ptr<juce::AudioParameterFloat>(rightShiftParam));
@@ -179,6 +179,11 @@ void AudioPluginAudioProcessor::createTS9ParametersAndInitWasm(juce::AudioProces
             float minVal = item.getProperty("min", 0.0f);
             float maxVal = item.getProperty("max", 1.0f);
             float initVal = item.getProperty("init", 0.0f);
+            
+            // Override with custom defaults
+            if (label == "drive") initVal = 1.0f;
+            else if (label == "level") initVal = -12.86f;
+            else if (label == "tone") initVal = 765.4f;
             
             std::cout << "  Range: " << minVal << " to " << maxVal << ", default: " << initVal << std::endl;
             
