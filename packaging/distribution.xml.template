@@ -2,12 +2,26 @@
 <installer-gui-script minSpecVersion="1">
     <title>FUZZAVER</title>
     <license file="LICENSE" />
-    <pkg-ref id="org.jaffco.fuzzaver.au.pkg"/>
-    <pkg-ref id="org.jaffco.fuzzaver.vst3.pkg"/>
-    <pkg-ref id="org.jaffco.fuzzaver.app.pkg"/>
     <options customize="never" require-scripts="false"/>
     <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
-    <installer-script>
-        <run-privileged/>
-    </installer-script>
+    
+    <choices-outline>
+        <line choice="org.jaffco.fuzzaver.au.pkg"/>
+        <line choice="org.jaffco.fuzzaver.vst3.pkg"/>
+        <line choice="org.jaffco.fuzzaver.app.pkg"/>
+    </choices-outline>
+    
+    <choice id="org.jaffco.fuzzaver.au.pkg" title="Audio Unit">
+        <pkg-ref id="org.jaffco.fuzzaver.au.pkg"/>
+    </choice>
+    <choice id="org.jaffco.fuzzaver.vst3.pkg" title="VST3">
+        <pkg-ref id="org.jaffco.fuzzaver.vst3.pkg"/>
+    </choice>
+    <choice id="org.jaffco.fuzzaver.app.pkg" title="Standalone Application">
+        <pkg-ref id="org.jaffco.fuzzaver.app.pkg"/>
+    </choice>
+    
+    <pkg-ref id="org.jaffco.fuzzaver.au.pkg">FUZZAVER.au.pkg</pkg-ref>
+    <pkg-ref id="org.jaffco.fuzzaver.vst3.pkg">FUZZAVER.vst3.pkg</pkg-ref>
+    <pkg-ref id="org.jaffco.fuzzaver.app.pkg">FUZZAVER.app.pkg</pkg-ref>
 </installer-gui-script>
