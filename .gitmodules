@@ -1,3 +1,6 @@
 [submodule "include/JUCE"]
 	path = include/JUCE
 	url = https://github.com/juce-framework/JUCE
+[submodule "Gimmel"]
+	path = Gimmel
+	url = https://github.com/jaffco/Gimmel

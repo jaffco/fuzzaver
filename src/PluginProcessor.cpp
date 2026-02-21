@@ -70,13 +70,54 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
     }
     
     // Create parameters
-    addParameter(useWavFileParam = new juce::AudioParameterBool("useWavFile", "Use WAV File", true));
+    addParameter(useWavFileParam = new juce::AudioParameterBool(
+        juce::ParameterID{"useWavFile", 1}, "Use WAV File", false));
+    addParameter(fuzzEnabledParam = new juce::AudioParameterBool(
+        juce::ParameterID{"fuzzEnabled", 1}, "Fuzz Enabled", false));
+
+    // Internal pitch-shifter parameters (not shown in GUI)
     addParameter(leftShiftParam = new juce::AudioParameterFloat("leftShift", "Left Shift (semitones)", -12.0f, 12.0f, -12.0f));
     addParameter(rightShiftParam = new juce::AudioParameterFloat("rightShift", "Right Shift (semitones)", -12.0f, 12.0f, 12.0f));
     addParameter(leftWindowParam = new juce::AudioParameterFloat("leftWindow", "Left Window (samples)", 50.0f, 10000.0f, 2500.0f));
     addParameter(rightWindowParam = new juce::AudioParameterFloat("rightWindow", "Right Window (samples)", 50.0f, 10000.0f, 2500.0f));
     addParameter(leftXfadeParam = new juce::AudioParameterFloat("leftXfade", "Left Xfade (samples)", 1.0f, 10000.0f, 1500.0f));
     addParameter(rightXfadeParam = new juce::AudioParameterFloat("rightXfade", "Right Xfade (samples)", 1.0f, 10000.0f, 1500.0f));
+
+    // Compressor parameters (first in signal chain)
+    addParameter(compEnabledParam = new juce::AudioParameterBool(
+        juce::ParameterID{"compEnabled", 1}, "Comp Enabled", true));
+    addParameter(compThreshParam = new juce::AudioParameterFloat(
+        juce::ParameterID{"compThresh", 1}, "Comp Threshold (dB)",
+        juce::NormalisableRange<float>(-60.0f, 0.0f), -20.0f));
+    addParameter(compRatioParam = new juce::AudioParameterFloat(
+        juce::ParameterID{"compRatio", 1}, "Comp Ratio",
+        juce::NormalisableRange<float>(1.1f, 20.0f), 4.0f));
+    addParameter(compKneeParam = new juce::AudioParameterFloat(
+        juce::ParameterID{"compKnee", 1}, "Comp Knee (dB)",
+        juce::NormalisableRange<float>(0.01f, 10.0f), 1.0f));
+    addParameter(compAttackParam = new juce::AudioParameterFloat(
+        juce::ParameterID{"compAttack", 1}, "Comp Attack (ms)",
+        juce::NormalisableRange<float>(0.0f, 100.0f), 3.5f));
+    addParameter(compReleaseParam = new juce::AudioParameterFloat(
+        juce::ParameterID{"compRelease", 1}, "Comp Release (ms)",
+        juce::NormalisableRange<float>(0.0f, 300.0f), 100.0f));
+    addParameter(compMakeupParam = new juce::AudioParameterFloat(
+        juce::ParameterID{"compMakeup", 1}, "Comp Makeup (dB)",
+        juce::NormalisableRange<float>(-20.0f, 20.0f), 0.0f));
+
+    // Mix level parameters (dB, -24 to +6)
+    addParameter(downShiftLevelParam = new juce::AudioParameterFloat(
+        juce::ParameterID{"downShiftLevel", 1}, "Down Shift Level (dB)",
+        juce::NormalisableRange<float>(-24.0f, 6.0f), 4.0f));
+    addParameter(upShiftLevelParam = new juce::AudioParameterFloat(
+        juce::ParameterID{"upShiftLevel", 1}, "Up Shift Level (dB)",
+        juce::NormalisableRange<float>(-24.0f, 6.0f), -8.0f));
+
+    // Solo parameters
+    addParameter(downShiftSoloParam = new juce::AudioParameterBool(
+        juce::ParameterID{"downShiftSolo", 1}, "Down Shift Solo", false));
+    addParameter(upShiftSoloParam = new juce::AudioParameterBool(
+        juce::ParameterID{"upShiftSolo", 1}, "Up Shift Solo", false));
 }
 
 AudioPluginAudioProcessor::~AudioPluginAudioProcessor()
@@ -171,9 +212,9 @@ void AudioPluginAudioProcessor::createTS9ParametersAndInitWasm(juce::AudioProces
             float initVal = item.getProperty("init", 0.0f);
             
             // Override with custom defaults
-            if (label == "drive") initVal = 1.0f;
-            else if (label == "level") initVal = -12.86f;
-            else if (label == "tone") initVal = 765.4f;
+            if (label == "drive") initVal = 0.48f;
+            else if (label == "level") initVal = -8.0f;
+            else if (label == "tone") initVal = 709.0f;
             
             std::cout << "  Range: " << minVal << " to " << maxVal << ", default: " << initVal << std::endl;
             
@@ -371,6 +412,12 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     // Initialize pitch shifters
     pitchShifterLeft.init(static_cast<int>(sampleRate));
     pitchShifterRight.init(static_cast<int>(sampleRate));
+
+    // Create compressor with correct sample rate
+    compressor = std::make_unique<giml::Compressor<float>>(static_cast<int>(sampleRate));
+    compressor->enable();
+    compressor->setParams(*compThreshParam, *compRatioParam, *compMakeupParam,
+                          *compKneeParam, *compAttackParam, *compReleaseParam);
     
     // Set pitch shift parameters from current parameter values
     pitchShifterLeft.fHslider1 = *leftShiftParam;    // shift (semitones)
@@ -402,9 +449,14 @@ bool AudioPluginAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
      && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
 
-    // This checks if the input layout matches the output layout
    #if ! JucePlugin_IsSynth
-    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
+    // Allow mono input → stereo output (mono-to-stereo widening), as well as
+    // matched mono→mono and stereo→stereo layouts.
+    const auto& in  = layouts.getMainInputChannelSet();
+    const auto& out = layouts.getMainOutputChannelSet();
+    const bool monoToStereo = (in == juce::AudioChannelSet::mono()
+                             && out == juce::AudioChannelSet::stereo());
+    if (!monoToStereo && in != out)
         return false;
    #endif
 
@@ -456,6 +508,21 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             float sampleR = fileChannels > 1 ? audioFileBuffer.getSample(1, pos) : sampleL;
             ts9InputData[sample] = (sampleL + sampleR) * 0.5f; // Sum to mono
         }
+
+        // Save uncompressed input as dry reference
+        juce::AudioBuffer<float> rawInputBuffer(1, numSamples);
+        float* rawInputData = rawInputBuffer.getWritePointer(0);
+        rawInputBuffer.copyFrom(0, 0, ts9InputBuffer, 0, 0, numSamples);
+
+        // ===== STEP 1b: Apply compressor (first in signal chain) =====
+        if (compressor)
+        {
+            compressor->toggle(compEnabledParam->get());
+            compressor->setParams(*compThreshParam, *compRatioParam, *compMakeupParam,
+                                  *compKneeParam, *compAttackParam, *compReleaseParam);
+            for (int i = 0; i < numSamples; ++i)
+                ts9InputData[i] = compressor->processSample(ts9InputData[i]);
+        }
         
         // ===== STEP 2: Process through TS9 WASM =====
         // Sync JUCE parameters to TS9 WASM
@@ -523,48 +590,71 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             ts9OutputData[i] = sample;
         }
         
-        // ===== STEP 3: Apply pitch shifting to TS9-processed audio =====
-        // Temporary buffers for pitch shifting
-        juce::AudioBuffer<float> tempBuffer(1, numSamples); // FAUST processes mono
-        
+        // ===== STEP 3: Apply pitch shifting =====
+        const bool  fuzzEnabled = fuzzEnabledParam->get();
+        const float downGain    = juce::Decibels::decibelsToGain(downShiftLevelParam->get());
+        const float upGain      = juce::Decibels::decibelsToGain(upShiftLevelParam->get());
+
+        // Update pitch shifter parameters once, before any processing
+        pitchShifterLeft.fHslider1 = *leftShiftParam;    // shift (semitones)
+        pitchShifterLeft.fHslider0 = *leftWindowParam;   // window (samples)
+        pitchShifterLeft.fHslider2 = *leftXfadeParam;    // xfade (samples)
+        pitchShifterRight.fHslider1 = *rightShiftParam;
+        pitchShifterRight.fHslider0 = *rightWindowParam;
+        pitchShifterRight.fHslider2 = *rightXfadeParam;
+
+        // Compute downshift branch (compressed clean signal)
+        juce::AudioBuffer<float> downShiftBuffer(1, numSamples);
+        downShiftBuffer.copyFrom(0, 0, ts9InputBuffer, 0, 0, numSamples);
+        {
+            float* ptr[1] = { downShiftBuffer.getWritePointer(0) };
+            pitchShifterLeft.compute(numSamples, ptr, ptr);
+        }
+
+        // Compute upshift branch (fuzzed or clean, depending on toggle)
+        juce::AudioBuffer<float> upShiftBuffer(1, numSamples);
+        {
+            float* upData = upShiftBuffer.getWritePointer(0);
+            const float* src = fuzzEnabled ? ts9OutputData : rawInputData;
+            for (int i = 0; i < numSamples; ++i)
+                upData[i] = src[i];
+            float* ptr[1] = { upData };
+            pitchShifterRight.compute(numSamples, ptr, ptr);
+        }
+
+        // Solo logic: when a branch is soloed, only that pitched signal is heard
+        // (dry and the other branch are both muted)
+        const bool soloDown  = downShiftSoloParam->get();
+        const bool soloUp    = upShiftSoloParam->get();
+        const bool anySolo   = soloDown || soloUp;
+        const float dryScale       = anySolo ? 0.0f : 1.0f;
+        const float activeDownGain = (!anySolo || soloDown) ? downGain : 0.0f;
+        const float activeUpGain   = (!anySolo || soloUp)   ? upGain   : 0.0f;
+
+        // Write to output channels
         for (int channel = 0; channel < numChannels; ++channel)
         {
-            float* outputData = buffer.getWritePointer(channel);
-            
-            // Fill temp buffer with TS9-processed data (for pitch shifting)
-            // The TS9 output will be used as both the dry signal and pitch shifter input
-            float* tempData = tempBuffer.getWritePointer(0);
-            for (int sample = 0; sample < numSamples; ++sample)
+            float* outputData        = buffer.getWritePointer(channel);
+            const float* downData    = downShiftBuffer.getReadPointer(0);
+            const float* upData      = upShiftBuffer.getReadPointer(0);
+
+            if (numChannels == 1)
             {
-                // Use TS9-processed audio as input to pitch shifter
-                tempData[sample] = ts9OutputData[sample];
+                // Mono output: sum both shifted branches
+                for (int sample = 0; sample < numSamples; ++sample)
+                    outputData[sample] = rawInputData[sample] * dryScale
+                                       + downData[sample] * activeDownGain
+                                       + upData[sample]   * activeUpGain;
             }
-            
-            // Update pitch shifter parameters from current parameter values
-            pitchShifterLeft.fHslider1 = *leftShiftParam;    // shift (semitones)
-            pitchShifterLeft.fHslider0 = *leftWindowParam;   // window (samples)
-            pitchShifterLeft.fHslider2 = *leftXfadeParam;    // xfade (samples)
-            
-            pitchShifterRight.fHslider1 = *rightShiftParam;  // shift (semitones)
-            pitchShifterRight.fHslider0 = *rightWindowParam; // window (samples)
-            pitchShifterRight.fHslider2 = *rightXfadeParam;  // xfade (samples)
-            
-            // Apply pitch shifting to TS9-processed audio
-            float* inputOutputPtr[1] = {tempData};
-            
-            if (channel == 0) // Left channel
+            else
             {
-                pitchShifterLeft.compute(numSamples, inputOutputPtr, inputOutputPtr);
-            }
-            else if (channel == 1) // Right channel
-            {
-                pitchShifterRight.compute(numSamples, inputOutputPtr, inputOutputPtr);
-            }
-            
-            // Mix: TS9-processed audio (dry) + pitch-shifted TS9-processed audio
-            for (int sample = 0; sample < numSamples; ++sample)
-            {
-                outputData[sample] = ts9OutputData[sample] + tempData[sample];
+                // Stereo output: ch0 = dry+down, ch1 = dry+up
+                if (channel == 0)
+                    for (int sample = 0; sample < numSamples; ++sample)
+                        outputData[sample] = rawInputData[sample] * dryScale + downData[sample] * activeDownGain;
+                else
+                    for (int sample = 0; sample < numSamples; ++sample)
+                        outputData[sample] = rawInputData[sample] * dryScale + upData[sample] * activeUpGain;
             }
         }
 
@@ -594,6 +684,21 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             }
             ts9InputData[sample] = sum / (float)totalNumInputChannels; // Average to mono
         }
+
+        // Save uncompressed input as dry reference
+        juce::AudioBuffer<float> rawInputBuffer(1, numSamples);
+        float* rawInputData = rawInputBuffer.getWritePointer(0);
+        rawInputBuffer.copyFrom(0, 0, ts9InputBuffer, 0, 0, numSamples);
+
+        // ===== STEP 1b: Apply compressor (first in signal chain) =====
+        if (compressor)
+        {
+            compressor->toggle(compEnabledParam->get());
+            compressor->setParams(*compThreshParam, *compRatioParam, *compMakeupParam,
+                                  *compKneeParam, *compAttackParam, *compReleaseParam);
+            for (int i = 0; i < numSamples; ++i)
+                ts9InputData[i] = compressor->processSample(ts9InputData[i]);
+        }
         
         // ===== STEP 2: Process through TS9 WASM =====
         // Sync JUCE parameters to TS9 WASM
@@ -661,47 +766,71 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             ts9OutputData[i] = sample;
         }
         
-        // ===== STEP 3: Apply pitch shifting to TS9-processed audio =====
-        // Temporary buffers for pitch shifting
-        juce::AudioBuffer<float> tempBuffer(1, numSamples); // FAUST processes mono
-        
+        // ===== STEP 3: Apply pitch shifting =====
+        const bool  fuzzEnabled = fuzzEnabledParam->get();
+        const float downGain    = juce::Decibels::decibelsToGain(downShiftLevelParam->get());
+        const float upGain      = juce::Decibels::decibelsToGain(upShiftLevelParam->get());
+
+        // Update pitch shifter parameters once, before any processing
+        pitchShifterLeft.fHslider1 = *leftShiftParam;
+        pitchShifterLeft.fHslider0 = *leftWindowParam;
+        pitchShifterLeft.fHslider2 = *leftXfadeParam;
+        pitchShifterRight.fHslider1 = *rightShiftParam;
+        pitchShifterRight.fHslider0 = *rightWindowParam;
+        pitchShifterRight.fHslider2 = *rightXfadeParam;
+
+        // Compute downshift branch (compressed clean signal)
+        juce::AudioBuffer<float> downShiftBuffer(1, numSamples);
+        downShiftBuffer.copyFrom(0, 0, ts9InputBuffer, 0, 0, numSamples);
+        {
+            float* ptr[1] = { downShiftBuffer.getWritePointer(0) };
+            pitchShifterLeft.compute(numSamples, ptr, ptr);
+        }
+
+        // Compute upshift branch (fuzzed or clean, depending on toggle)
+        juce::AudioBuffer<float> upShiftBuffer(1, numSamples);
+        {
+            float* upData = upShiftBuffer.getWritePointer(0);
+            const float* src = fuzzEnabled ? ts9OutputData : rawInputData;
+            for (int i = 0; i < numSamples; ++i)
+                upData[i] = src[i];
+            float* ptr[1] = { upData };
+            pitchShifterRight.compute(numSamples, ptr, ptr);
+        }
+
+        // Solo logic: when a branch is soloed, only that pitched signal is heard
+        // (dry and the other branch are both muted)
+        const bool soloDown  = downShiftSoloParam->get();
+        const bool soloUp    = upShiftSoloParam->get();
+        const bool anySolo   = soloDown || soloUp;
+        const float dryScale       = anySolo ? 0.0f : 1.0f;
+        const float activeDownGain = (!anySolo || soloDown) ? downGain : 0.0f;
+        const float activeUpGain   = (!anySolo || soloUp)   ? upGain   : 0.0f;
+
+        // Write to output channels
         for (int channel = 0; channel < numChannels; ++channel)
         {
-            float* outputData = buffer.getWritePointer(channel);
-            
-            // Fill temp buffer with TS9-processed data (for pitch shifting)
-            float* tempData = tempBuffer.getWritePointer(0);
-            for (int sample = 0; sample < numSamples; ++sample)
+            float* outputData        = buffer.getWritePointer(channel);
+            const float* downData    = downShiftBuffer.getReadPointer(0);
+            const float* upData      = upShiftBuffer.getReadPointer(0);
+
+            if (numChannels == 1)
             {
-                // Use TS9-processed audio as input to pitch shifter
-                tempData[sample] = ts9OutputData[sample];
+                // Mono output: sum both shifted branches
+                for (int sample = 0; sample < numSamples; ++sample)
+                    outputData[sample] = rawInputData[sample] * dryScale
+                                       + downData[sample] * activeDownGain
+                                       + upData[sample]   * activeUpGain;
             }
-            
-            // Update pitch shifter parameters from current parameter values
-            pitchShifterLeft.fHslider1 = *leftShiftParam;    // shift (semitones)
-            pitchShifterLeft.fHslider0 = *leftWindowParam;   // window (samples)
-            pitchShifterLeft.fHslider2 = *leftXfadeParam;    // xfade (samples)
-            
-            pitchShifterRight.fHslider1 = *rightShiftParam;  // shift (semitones)
-            pitchShifterRight.fHslider0 = *rightWindowParam; // window (samples)
-            pitchShifterRight.fHslider2 = *rightXfadeParam;  // xfade (samples)
-            
-            // Apply pitch shifting to TS9-processed audio
-            float* inputOutputPtr[1] = {tempData};
-            
-            if (channel == 0) // Left channel
+            else
             {
-                pitchShifterLeft.compute(numSamples, inputOutputPtr, inputOutputPtr);
-            }
-            else if (channel == 1) // Right channel
-            {
-                pitchShifterRight.compute(numSamples, inputOutputPtr, inputOutputPtr);
-            }
-            
-            // Mix: TS9-processed audio (dry) + pitch-shifted TS9-processed audio
-            for (int sample = 0; sample < numSamples; ++sample)
-            {
-                outputData[sample] = ts9OutputData[sample] + tempData[sample];
+                // Stereo output: ch0 = dry+down, ch1 = dry+up
+                if (channel == 0)
+                    for (int sample = 0; sample < numSamples; ++sample)
+                        outputData[sample] = rawInputData[sample] * dryScale + downData[sample] * activeDownGain;
+                else
+                    for (int sample = 0; sample < numSamples; ++sample)
+                        outputData[sample] = rawInputData[sample] * dryScale + upData[sample] * activeUpGain;
             }
         }
     }

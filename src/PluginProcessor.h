@@ -3,7 +3,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "fausts/pitchShifter.cpp"
 #include "wasm-ts9.h"
+#include "compressor.hpp"
 #include <map>
+#include <memory>
 
 //==============================================================================
 class AudioPluginAudioProcessor final : public juce::AudioProcessor
@@ -45,6 +47,31 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    // =========================================================================
+    // GUI-exposed parameters (public so the editor can build attachments)
+    // =========================================================================
+
+    // Global toggles
+    juce::AudioParameterBool*  useWavFileParam   = nullptr;
+    juce::AudioParameterBool*  fuzzEnabledParam  = nullptr;
+
+    // Compressor
+    juce::AudioParameterBool*  compEnabledParam  = nullptr;
+    juce::AudioParameterFloat* compThreshParam   = nullptr;
+    juce::AudioParameterFloat* compRatioParam    = nullptr;
+    juce::AudioParameterFloat* compKneeParam     = nullptr;
+    juce::AudioParameterFloat* compAttackParam   = nullptr;
+    juce::AudioParameterFloat* compReleaseParam  = nullptr;
+    juce::AudioParameterFloat* compMakeupParam   = nullptr;
+
+    // Mix levels (dB)
+    juce::AudioParameterFloat* downShiftLevelParam = nullptr;
+    juce::AudioParameterFloat* upShiftLevelParam   = nullptr;
+
+    // Solo
+    juce::AudioParameterBool*  downShiftSoloParam  = nullptr;
+    juce::AudioParameterBool*  upShiftSoloParam    = nullptr;
+
 private:
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioPluginAudioProcessor)
@@ -64,16 +91,16 @@ private:
     wasm_rt_memory_t* ts9WasmMemory = nullptr;
     std::map<juce::String, int> ts9ParameterIndexMap;
     
-    // Pitch shifters
+    // Pitch shifters (internal params not exposed in GUI)
     mydsp pitchShifterLeft;
     mydsp pitchShifterRight;
-    
-    // Parameters
-    juce::AudioParameterFloat* leftShiftParam;
-    juce::AudioParameterFloat* rightShiftParam;
-    juce::AudioParameterFloat* leftWindowParam;
-    juce::AudioParameterFloat* rightWindowParam;
-    juce::AudioParameterFloat* leftXfadeParam;
-    juce::AudioParameterFloat* rightXfadeParam;
-    juce::AudioParameterBool* useWavFileParam;
+    juce::AudioParameterFloat* leftShiftParam    = nullptr;
+    juce::AudioParameterFloat* rightShiftParam   = nullptr;
+    juce::AudioParameterFloat* leftWindowParam   = nullptr;
+    juce::AudioParameterFloat* rightWindowParam  = nullptr;
+    juce::AudioParameterFloat* leftXfadeParam    = nullptr;
+    juce::AudioParameterFloat* rightXfadeParam   = nullptr;
+
+    // Compressor DSP object
+    std::unique_ptr<giml::Compressor<float>> compressor;
 };
